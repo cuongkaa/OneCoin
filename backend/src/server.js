@@ -49,15 +49,13 @@ const logger = winston.createLogger({
   ],
 });
 
-// Console logging in development
-if (process.env.NODE_ENV !== 'production') {
-  logger.add(new winston.transports.Console({
-    format: winston.format.combine(
-      winston.format.colorize(),
-      winston.format.simple()
-    ),
-  }));
-}
+// Always enable Console logging for Cloud platforms (Render, Docker, etc.)
+logger.add(new winston.transports.Console({
+  format: winston.format.combine(
+    winston.format.colorize(),
+    winston.format.simple()
+  ),
+}));
 
 // Make logger globally accessible
 app.locals.logger = logger;
@@ -137,8 +135,14 @@ app.get('/health', async (req, res) => {
     await pool.query('SELECT id, username, email, password, "displayName", role, "isLocked" FROM users LIMIT 1');
     await pool.query('SELECT "userId", token, "deviceId", "userAgent", "expiresAt" FROM refresh_tokens LIMIT 1');
   } catch (err) {
+    console.error('❌ Health check database error:', err.message, err.code);
     logger.error({ message: 'Health check database error', error: err.message, code: err.code });
-    return res.status(503).json({ status: 'UNAVAILABLE', error: 'Cơ sở dữ liệu chưa sẵn sàng' });
+    return res.status(503).json({
+      status: 'UNAVAILABLE',
+      error: 'Cơ sở dữ liệu chưa sẵn sàng',
+      detail: err.message,
+      code: err.code,
+    });
   }
   res.json({
     status: 'OK',
@@ -155,6 +159,7 @@ app.use((req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err);
   logger.error({
     message: err.message,
     stack: err.stack,
@@ -166,16 +171,25 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Lỗi hệ thống', requestId: req.id });
 });
 
-initDatabase()
-  .then(() => {
-    app.listen(PORT, () => {
-      logger.info(`🚀 OnMoreCoin API Server running on port ${PORT}`);
-      logger.info(`📍 http://localhost:${PORT}`);
-      logger.info(`❤️  Health check: http://localhost:${PORT}/health`);
+// Start server
+app.listen(PORT, () => {
+  console.log(`🚀 OnMoreCoin API Server running on port ${PORT}`);
+  console.log(`📍 http://localhost:${PORT}`);
+  console.log(`❤️  Health check: http://localhost:${PORT}/health`);
+  
+  if (!process.env.DATABASE_URL) {
+    console.error('❌ WARNING: DATABASE_URL environment variable is missing!');
+  } else if (process.env.DATABASE_URL.includes('localhost') && process.env.NODE_ENV === 'production') {
+    console.error('⚠️ WARNING: DATABASE_URL points to "localhost" in production! Render cannot connect to your personal PC localhost.');
+  }
+
+  // Initialize DB tables
+  initDatabase()
+    .then(() => {
+      console.log('✅ Database tables initialized successfully');
+    })
+    .catch((err) => {
+      console.error('❌ Database initialization error:', err.message, err.code);
+      logger.error({ message: 'Database initialization failed', error: err.message, code: err.code });
     });
-  })
-  .catch(async (err) => {
-    logger.error({ message: 'Database initialization failed', error: err.message, code: err.code });
-    await pool.end();
-    process.exitCode = 1;
-  });
+});
