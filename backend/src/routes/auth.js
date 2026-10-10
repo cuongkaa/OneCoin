@@ -32,6 +32,81 @@ async function generateRefreshToken(userId, deviceId, userAgent) {
   return token;
 }
 
+// GET /auth/diagnostic
+router.get('/diagnostic', async (req, res) => {
+  const results = {};
+  results.env = {
+    has_jwt_secret: !!process.env.JWT_SECRET,
+    jwt_secret_len: process.env.JWT_SECRET ? process.env.JWT_SECRET.length : 0,
+    has_db_url: !!process.env.DATABASE_URL,
+    node_env: process.env.NODE_ENV,
+    db_ssl: process.env.DB_SSL,
+  };
+
+  try {
+    const timeRes = await pool.query('SELECT NOW()');
+    results.time_check = timeRes.rows[0];
+  } catch (err) {
+    results.time_check_error = { message: err.message, code: err.code };
+  }
+
+  try {
+    const colsRes = await pool.query(
+      `SELECT column_name, data_type 
+       FROM information_schema.columns 
+       WHERE table_name = 'users' 
+       ORDER BY ordinal_position`
+    );
+    results.users_columns = colsRes.rows;
+  } catch (err) {
+    results.users_columns_error = { message: err.message, code: err.code };
+  }
+
+  try {
+    const paramRes = await pool.query('SELECT id, username FROM users WHERE username = $1', ['test_check']);
+    results.users_param_query = 'SUCCESS';
+    results.users_param_count = paramRes.rows.length;
+  } catch (err) {
+    results.users_param_query_error = { message: err.message, code: err.code, detail: err.detail };
+  }
+
+  try {
+    const tokenCols = await pool.query(
+      `SELECT column_name, data_type 
+       FROM information_schema.columns 
+       WHERE table_name = 'refresh_tokens' 
+       ORDER BY ordinal_position`
+    );
+    results.refresh_tokens_columns = tokenCols.rows;
+  } catch (err) {
+    results.refresh_tokens_columns_error = { message: err.message, code: err.code };
+  }
+
+  try {
+    const tokenParamRes = await pool.query('SELECT * FROM refresh_tokens WHERE token = $1', ['test_token']);
+    results.refresh_tokens_param_query = 'SUCCESS';
+  } catch (err) {
+    results.refresh_tokens_param_query_error = { message: err.message, code: err.code, detail: err.detail };
+  }
+
+  try {
+    const hash = await bcrypt.hash('test123', 10);
+    const match = await bcrypt.compare('test123', hash);
+    results.bcrypt_test = match ? 'SUCCESS' : 'FAILED';
+  } catch (err) {
+    results.bcrypt_error = { message: err.message };
+  }
+
+  try {
+    const token = generateAccessToken('12345', 'testuser');
+    results.jwt_test = token ? 'SUCCESS' : 'FAILED';
+  } catch (err) {
+    results.jwt_error = { message: err.message };
+  }
+
+  res.json(results);
+});
+
 // POST /auth/register
 router.post('/register', async (req, res) => {
   try {
@@ -84,7 +159,7 @@ router.post('/register', async (req, res) => {
     });
   } catch (err) {
     console.error('Register error:', err);
-    res.status(500).json({ error: 'Lỗi hệ thống' });
+    res.status(500).json({ error: 'Lỗi hệ thống', detail: err.message, code: err.code });
   }
 });
 
@@ -137,7 +212,7 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     console.error('Login error:', err);
-    res.status(500).json({ error: 'Lỗi hệ thống' });
+    res.status(500).json({ error: 'Lỗi hệ thống', detail: err.message, code: err.code });
   }
 });
 
@@ -193,7 +268,7 @@ router.post('/refresh', async (req, res) => {
     });
   } catch (err) {
     console.error('Refresh token error:', err);
-    res.status(500).json({ error: 'Lỗi hệ thống' });
+    res.status(500).json({ error: 'Lỗi hệ thống', detail: err.message, code: err.code });
   }
 });
 
