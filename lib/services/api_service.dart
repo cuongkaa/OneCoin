@@ -1,98 +1,129 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
 
-/// Service gọi REST API backend
-/// Hỗ trợ: Auto-refresh token, device binding, idempotency
+/// Service gọi REST API backend (Tương thích 100% cả Android/iOS/Desktop và Chrome Web)
 class ApiService {
   static final ApiService instance = ApiService._();
   ApiService._();
 
+  final http.Client _client = http.Client();
+
   String? _accessToken;
   String? _refreshToken;
-  bool _isRefreshing = false;
+  String? _cachedDeviceId;
+  bool _tokensLoaded = false;
+  Future<bool>? _refreshFuture;
 
-  // ========================
-  // TOKEN MANAGEMENT
-  // ========================
+  bool? _cachedReachable;
+  DateTime? _lastReachabilityCheck;
+  Future<bool>? _inflightHealthCheck;
 
-  /// Lấy access token đã lưu
-  Future<String?> getToken() async {
-    if (_accessToken != null) return _accessToken;
+  static const Duration _onlineCacheTtl = Duration(seconds: 30);
+  static const Duration _offlineCacheTtl = Duration(seconds: 20);
+  static const Duration _requestTimeout = Duration(seconds: 10);
+
+  /// Nhận diện mọi lỗi kết nối mạng đa nền tảng (bao gồm SocketException trên Mobile & ClientException 'Failed to fetch' trên Chrome Web)
+  static bool _isNetworkException(Object error) {
+    if (error is TimeoutException || error is http.ClientException) {
+      return true;
+    }
+    final msg = error.toString();
+    return msg.contains('SocketException') ||
+        msg.contains('Failed to fetch') ||
+        msg.contains('XMLHttpRequest') ||
+        msg.contains('Connection refused') ||
+        msg.contains('Network is unreachable');
+  }
+
+  Future<void> _ensureTokensLoaded() async {
+    if (_tokensLoaded) return;
     final prefs = await SharedPreferences.getInstance();
     _accessToken = prefs.getString('jwt_token');
     _refreshToken = prefs.getString('refresh_token');
+    _cachedDeviceId = prefs.getString('device_id');
+    _tokensLoaded = true;
+  }
+
+  Future<String?> getToken() async {
+    await _ensureTokensLoaded();
     return _accessToken;
   }
 
-  /// Lưu cả access + refresh token
   Future<void> saveTokens({required String accessToken, required String refreshToken}) async {
     _accessToken = accessToken;
     _refreshToken = refreshToken;
+    _tokensLoaded = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', accessToken);
     await prefs.setString('refresh_token', refreshToken);
   }
 
-  /// Lưu access token (backward compat)
   Future<void> saveToken(String token) async {
     _accessToken = token;
+    _tokensLoaded = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('jwt_token', token);
   }
 
-  /// Xoá token khi đăng xuất
   Future<void> clearToken() async {
     _accessToken = null;
     _refreshToken = null;
+    _tokensLoaded = true;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('jwt_token');
     await prefs.remove('refresh_token');
   }
 
-  /// Kiểm tra có token không
   Future<bool> hasToken() async {
     final token = await getToken();
     return token != null && token.isNotEmpty;
   }
 
-  /// Headers chuẩn cho mọi request
   Future<Map<String, String>> _headers() async {
     final token = await getToken();
     return {
       'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
+      // Không gửi 'Connection: keep-alive' trên trình duyệt Chrome để tránh lỗi Forbidden Header / CORS Preflight
+      if (!kIsWeb) 'Connection': 'keep-alive',
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
     };
   }
 
-  // ========================
-  // AUTO-REFRESH TOKEN
-  // ========================
+  void _markReachable(bool value) {
+    _cachedReachable = value;
+    _lastReachabilityCheck = DateTime.now();
+  }
 
-  /// Tự động refresh token khi nhận 401
-  /// Nếu refresh cũng fail → trả false (cần login lại)
-  Future<bool> _tryRefreshToken() async {
-    if (_isRefreshing) return false; // Tránh concurrent refresh
-    _isRefreshing = true;
+  Future<bool> _tryRefreshToken() {
+    if (_refreshFuture != null) return _refreshFuture!;
+    _refreshFuture = _doRefreshToken().whenComplete(() {
+      _refreshFuture = null;
+    });
+    return _refreshFuture!;
+  }
 
+  Future<bool> _doRefreshToken() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final refreshToken = _refreshToken ?? prefs.getString('refresh_token');
-
+      await _ensureTokensLoaded();
+      final refreshToken = _refreshToken;
       if (refreshToken == null || refreshToken.isEmpty) {
         return false;
       }
 
-      final response = await http.post(
-        Uri.parse(ApiConfig.refreshToken),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'refreshToken': refreshToken,
-          'deviceId': await _getDeviceId(),
-        }),
-      ).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .post(
+            Uri.parse(ApiConfig.refreshToken),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'refreshToken': refreshToken,
+              'deviceId': await _getDeviceId(),
+            }),
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -100,48 +131,60 @@ class ApiService {
           accessToken: data['token'],
           refreshToken: data['refreshToken'],
         );
+        _markReachable(true);
         return true;
-      } else {
-        // Refresh thất bại → cần login lại
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
         await clearToken();
         return false;
       }
-    } catch (e) {
-      print('[ApiService] Refresh token error: $e');
       return false;
-    } finally {
-      _isRefreshing = false;
+    } catch (_) {
+      return false;
     }
   }
 
-  /// Device ID đơn giản (dùng shared_preferences)
   Future<String> _getDeviceId() async {
+    await _ensureTokensLoaded();
+    if (_cachedDeviceId != null) return _cachedDeviceId!;
     final prefs = await SharedPreferences.getInstance();
-    var deviceId = prefs.getString('device_id');
-    if (deviceId == null) {
-      deviceId = DateTime.now().millisecondsSinceEpoch.toString();
-      await prefs.setString('device_id', deviceId);
-    }
-    return deviceId;
+    _cachedDeviceId = DateTime.now().millisecondsSinceEpoch.toString();
+    await prefs.setString('device_id', _cachedDeviceId!);
+    return _cachedDeviceId!;
   }
 
-  /// Kiểm tra server có hoạt động không
-  Future<bool> isServerReachable() async {
-    try {
-      final response = await http
-          .get(Uri.parse(ApiConfig.health))
-          .timeout(const Duration(seconds: 3));
-      return response.statusCode == 200;
-    } catch (e) {
-      return false;
+  Future<bool> isServerReachable({
+    Duration timeout = const Duration(milliseconds: 2200),
+    bool forceRefresh = false,
+  }) async {
+    if (!forceRefresh && _cachedReachable != null && _lastReachabilityCheck != null) {
+      final age = DateTime.now().difference(_lastReachabilityCheck!);
+      final ttl = _cachedReachable! ? _onlineCacheTtl : _offlineCacheTtl;
+      if (age < ttl) {
+        return _cachedReachable!;
+      }
     }
+
+    if (_inflightHealthCheck != null) return _inflightHealthCheck!;
+
+    _inflightHealthCheck = () async {
+      try {
+        final response = await _client
+            .get(Uri.parse(ApiConfig.health))
+            .timeout(timeout);
+        final ok = response.statusCode == 200;
+        _markReachable(ok);
+        return ok;
+      } catch (_) {
+        _markReachable(false);
+        return false;
+      } finally {
+        _inflightHealthCheck = null;
+      }
+    }();
+
+    return _inflightHealthCheck!;
   }
 
-  // ========================
-  // AUTH
-  // ========================
-
-  /// Đăng ký tài khoản mới
   Future<Map<String, dynamic>> register({
     required String username,
     required String email,
@@ -149,18 +192,21 @@ class ApiService {
     String? displayName,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.register),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': username,
-          'email': email,
-          'password': password,
-          'displayName': displayName ?? username,
-          'deviceId': await _getDeviceId(),
-        }),
-      );
+      final response = await _client
+          .post(
+            Uri.parse(ApiConfig.register),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': username,
+              'email': email,
+              'password': password,
+              'displayName': displayName ?? username,
+              'deviceId': await _getDeviceId(),
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
 
+      _markReachable(true);
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 201) {
@@ -170,31 +216,43 @@ class ApiService {
         );
         return {'success': true, 'user': data['user'], 'token': data['token']};
       } else {
-        return {'success': false, 'error': data['error'] ?? 'Đăng ký thất bại'};
+        return {
+          'success': false,
+          'statusCode': response.statusCode,
+          'error': data['error'] ?? 'Đăng ký thất bại',
+        };
       }
-    } on SocketException {
-      return {'success': false, 'error': 'Không thể kết nối đến server'};
     } catch (e) {
-      return {'success': false, 'error': 'Lỗi: $e'};
+      if (_isNetworkException(e)) {
+        _markReachable(false);
+        return {
+          'success': false,
+          'networkError': true,
+          'error': 'Không thể kết nối đến máy chủ (${ApiConfig.baseUrl})',
+        };
+      }
+      return {'success': false, 'error': 'Lỗi xử lý phản hồi: $e'};
     }
   }
 
-  /// Đăng nhập
   Future<Map<String, dynamic>> login({
     required String username,
     required String password,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse(ApiConfig.login),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'username': username,
-          'password': password,
-          'deviceId': await _getDeviceId(),
-        }),
-      );
+      final response = await _client
+          .post(
+            Uri.parse(ApiConfig.login),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'username': username,
+              'password': password,
+              'deviceId': await _getDeviceId(),
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
 
+      _markReachable(true);
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200) {
@@ -204,189 +262,170 @@ class ApiService {
         );
         return {'success': true, 'user': data['user'], 'token': data['token']};
       } else {
-        return {'success': false, 'error': data['error'] ?? 'Đăng nhập thất bại'};
+        return {
+          'success': false,
+          'statusCode': response.statusCode,
+          'error': data['error'] ?? 'Đăng nhập thất bại',
+        };
       }
-    } on SocketException {
-      return {'success': false, 'error': 'Không thể kết nối đến server'};
     } catch (e) {
-      return {'success': false, 'error': 'Lỗi: $e'};
+      if (_isNetworkException(e)) {
+        _markReachable(false);
+        return {
+          'success': false,
+          'networkError': true,
+          'error': 'Không thể kết nối đến máy chủ (${ApiConfig.baseUrl})',
+        };
+      }
+      return {'success': false, 'error': 'Lỗi xử lý phản hồi: $e'};
     }
   }
 
-  /// Lấy thông tin profile
-  Future<Map<String, dynamic>> getProfile() async {
-    return await _authenticatedGet(ApiConfig.profile);
-  }
+  Future<Map<String, dynamic>> getProfile() => _authenticatedGet(ApiConfig.profile);
 
-  /// Cập nhật profile
   Future<Map<String, dynamic>> updateProfile({
     String? displayName,
     String? username,
-  }) async {
-    return await _authenticatedPut(ApiConfig.profile, {
+  }) {
+    return _authenticatedPut(ApiConfig.profile, {
       if (displayName != null) 'displayName': displayName,
       if (username != null) 'username': username,
     });
   }
 
-  /// Đổi mật khẩu
   Future<Map<String, dynamic>> changePassword({
     required String oldPassword,
     required String newPassword,
-  }) async {
-    return await _authenticatedPut(ApiConfig.changePassword, {
+  }) {
+    return _authenticatedPut(ApiConfig.changePassword, {
       'oldPassword': oldPassword,
       'newPassword': newPassword,
     });
   }
 
-  // ========================
-  // AUTHENTICATED REQUEST HELPERS (auto-refresh)
-  // ========================
-
   Future<Map<String, dynamic>> _authenticatedGet(String url) async {
     var result = await get(url);
-    if (result['statusCode'] == 401) {
-      final refreshed = await _tryRefreshToken();
-      if (refreshed) {
-        result = await get(url);
-      }
+    if (result['statusCode'] == 401 && await _tryRefreshToken()) {
+      result = await get(url);
     }
     return result;
   }
 
   Future<Map<String, dynamic>> _authenticatedPut(String url, Map<String, dynamic> body) async {
     var result = await put(url, body);
-    if (result['statusCode'] == 401) {
-      final refreshed = await _tryRefreshToken();
-      if (refreshed) {
-        result = await put(url, body);
-      }
+    if (result['statusCode'] == 401 && await _tryRefreshToken()) {
+      result = await put(url, body);
     }
     return result;
   }
 
-  // ========================
-  // GENERIC CRUD HELPERS
-  // ========================
-
-  /// GET request
   Future<Map<String, dynamic>> get(String url) async {
     try {
-      final response = await http.get(
-        Uri.parse(url),
-        headers: await _headers(),
-      );
+      var response = await _client
+          .get(Uri.parse(url), headers: await _headers())
+          .timeout(_requestTimeout);
+      if (response.statusCode == 401 && await _tryRefreshToken()) {
+        response = await _client
+            .get(Uri.parse(url), headers: await _headers())
+            .timeout(_requestTimeout);
+      }
+      _markReachable(true);
       return {
         'success': response.statusCode == 200,
         'data': jsonDecode(response.body),
         'statusCode': response.statusCode,
       };
     } catch (e) {
+      if (_isNetworkException(e)) {
+        _markReachable(false);
+        return {'success': false, 'networkError': true, 'error': 'Mất kết nối máy chủ'};
+      }
       return {'success': false, 'error': 'Lỗi: $e'};
     }
   }
 
-  /// POST request (auto-refresh on 401)
   Future<Map<String, dynamic>> post(String url, Map<String, dynamic> body) async {
     try {
-      var response = await http.post(
-        Uri.parse(url),
-        headers: await _headers(),
-        body: jsonEncode(body),
-      );
+      final encoded = jsonEncode(body);
+      var response = await _client
+          .post(Uri.parse(url), headers: await _headers(), body: encoded)
+          .timeout(_requestTimeout);
 
-      // Auto-refresh nếu 401
-      if (response.statusCode == 401) {
-        final refreshed = await _tryRefreshToken();
-        if (refreshed) {
-          response = await http.post(
-            Uri.parse(url),
-            headers: await _headers(),
-            body: jsonEncode(body),
-          );
-        }
+      if (response.statusCode == 401 && await _tryRefreshToken()) {
+        response = await _client
+            .post(Uri.parse(url), headers: await _headers(), body: encoded)
+            .timeout(_requestTimeout);
       }
-
+      _markReachable(true);
       return {
         'success': response.statusCode == 200 || response.statusCode == 201,
         'data': jsonDecode(response.body),
         'statusCode': response.statusCode,
       };
     } catch (e) {
+      if (_isNetworkException(e)) {
+        _markReachable(false);
+        return {'success': false, 'networkError': true, 'error': 'Mất kết nối máy chủ'};
+      }
       return {'success': false, 'error': 'Lỗi: $e'};
     }
   }
 
-  /// PUT request (auto-refresh on 401)
   Future<Map<String, dynamic>> put(String url, Map<String, dynamic> body) async {
     try {
-      var response = await http.put(
-        Uri.parse(url),
-        headers: await _headers(),
-        body: jsonEncode(body),
-      );
+      final encoded = jsonEncode(body);
+      var response = await _client
+          .put(Uri.parse(url), headers: await _headers(), body: encoded)
+          .timeout(_requestTimeout);
 
-      if (response.statusCode == 401) {
-        final refreshed = await _tryRefreshToken();
-        if (refreshed) {
-          response = await http.put(
-            Uri.parse(url),
-            headers: await _headers(),
-            body: jsonEncode(body),
-          );
-        }
+      if (response.statusCode == 401 && await _tryRefreshToken()) {
+        response = await _client
+            .put(Uri.parse(url), headers: await _headers(), body: encoded)
+            .timeout(_requestTimeout);
       }
-
+      _markReachable(true);
       return {
         'success': response.statusCode == 200,
         'data': jsonDecode(response.body),
         'statusCode': response.statusCode,
       };
     } catch (e) {
+      if (_isNetworkException(e)) {
+        _markReachable(false);
+        return {'success': false, 'networkError': true, 'error': 'Mất kết nối máy chủ'};
+      }
       return {'success': false, 'error': 'Lỗi: $e'};
     }
   }
 
-  /// DELETE request (auto-refresh on 401)
   Future<Map<String, dynamic>> delete(String url) async {
     try {
-      var response = await http.delete(
-        Uri.parse(url),
-        headers: await _headers(),
-      );
+      var response = await _client
+          .delete(Uri.parse(url), headers: await _headers())
+          .timeout(_requestTimeout);
 
-      if (response.statusCode == 401) {
-        final refreshed = await _tryRefreshToken();
-        if (refreshed) {
-          response = await http.delete(
-            Uri.parse(url),
-            headers: await _headers(),
-          );
-        }
+      if (response.statusCode == 401 && await _tryRefreshToken()) {
+        response = await _client
+            .delete(Uri.parse(url), headers: await _headers())
+            .timeout(_requestTimeout);
       }
-
+      _markReachable(true);
       return {
         'success': response.statusCode == 200,
         'data': jsonDecode(response.body),
         'statusCode': response.statusCode,
       };
     } catch (e) {
+      if (_isNetworkException(e)) {
+        _markReachable(false);
+        return {'success': false, 'networkError': true, 'error': 'Mất kết nối máy chủ'};
+      }
       return {'success': false, 'error': 'Lỗi: $e'};
     }
   }
 
-  // ========================
-  // SYNC
-  // ========================
+  Future<Map<String, dynamic>> syncUpload(Map<String, dynamic> allData) =>
+      post(ApiConfig.syncUpload, allData);
 
-  /// Upload toàn bộ dữ liệu local lên server
-  Future<Map<String, dynamic>> syncUpload(Map<String, dynamic> allData) async {
-    return await post(ApiConfig.syncUpload, allData);
-  }
-
-  /// Download toàn bộ dữ liệu từ server về local
-  Future<Map<String, dynamic>> syncDownload() async {
-    return await get(ApiConfig.syncDownload);
-  }
+  Future<Map<String, dynamic>> syncDownload() => get(ApiConfig.syncDownload);
 }

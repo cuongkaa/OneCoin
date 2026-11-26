@@ -21,12 +21,14 @@ import 'package:onemorecoin/utils/Utils.dart' show Utils;
 import '../../../Objects/AlertDiaLogItem.dart';
 import '../../../model/TransactionModel.dart';
 import 'package:onemorecoin/utils/currency_provider.dart';
+import 'package:onemorecoin/services/SmartCategorizerService.dart';
 import 'package:intl/intl.dart';
 import 'ReceiptScanScreen.dart';
 
 class AddTransaction extends StatefulWidget {
   final TransactionModel? transactionModel;
-  const AddTransaction({super.key, this.transactionModel});
+  final Map<String, dynamic>? initialScanData;
+  const AddTransaction({super.key, this.transactionModel, this.initialScanData});
 
   @override
   State<AddTransaction> createState() => _AddTransactionState();
@@ -53,6 +55,67 @@ class _AddTransactionState extends State<AddTransaction> {
   bool _isSubmitEdit = false;
   final bool _loading = false;
 
+  // ── Category source tracking & Live ML ─────────────────────────────────────
+  int? _mlSuggestedGroupId;
+  String? _categorySource;
+  CategoryPrediction? _liveMlPrediction;
+  // ──────────────────────────────────────────────────────────────────────────
+
+  void _applyScanResultMap(Map<dynamic, dynamic> result) {
+    final groups = context.read<GroupModelProxy>().getAll();
+    if (result['amount'] is num && (result['amount'] as num) > 0) {
+      final amount = (result['amount'] as num).toDouble();
+      _currency = 'VND';
+      _amount = amount;
+      amountField.text = Utils.currencyFormat(
+        amount,
+        withoutUnit: true,
+        rawFormat: true,
+      );
+    }
+    if (result['merchantName'] is String &&
+        (result['merchantName'] as String).isNotEmpty) {
+      _noteValue = result['merchantName'] as String;
+    }
+    if (result['transactionDate'] is DateTime) {
+      _dateTime = result['transactionDate'] as DateTime;
+    }
+    final id = result['suggestedGroupId'];
+    if (id is int) {
+      for (final group in groups) {
+        if (group.id == id && group.type == 'expense') {
+          _selectedGroup = group;
+          _mlSuggestedGroupId = id;
+          _categorySource = (result['categorySource'] as String?) ??
+              CategorySource.mlSuggestedAccepted;
+          break;
+        }
+      }
+    }
+  }
+
+  Future<void> _triggerLiveMlPrediction(String text) async {
+    final trimmed = text.trim();
+    if (trimmed.length < 2) return;
+    final groups = context.read<GroupModelProxy>().getAll();
+    final pred = await SmartCategorizerService.predictWithConfidence(
+      trimmed,
+      groups,
+    );
+    if (!mounted || pred == null) return;
+    setState(() {
+      _liveMlPrediction = pred;
+      if (_selectedGroup.id == 0) {
+        final match = groups.where((g) => g.id == pred.groupId).toList();
+        if (match.isNotEmpty) {
+          _selectedGroup = match.first;
+          _mlSuggestedGroupId = pred.groupId;
+          _categorySource = CategorySource.mlSuggestedAccepted;
+        }
+      }
+    });
+  }
+
   // Predefined quick chips using Material Icons and solid colors
   final List<Map<String, dynamic>> _quickCategories = [
     {'label': 'Ăn uống', 'icon': Icons.restaurant, 'color': Colors.orange},
@@ -78,7 +141,17 @@ class _AddTransactionState extends State<AddTransaction> {
 
     if (result != null) {
       setState(() {
-        _selectedGroup = result['item'];
+        final chosen = result['item'] as GroupModel;
+        // Nếu người dùng chọn khác với gợi ý ML → đánh dấu "ignored"
+        // Nếu chọn đúng gợi ý → đánh dấu "accepted"
+        if (_mlSuggestedGroupId != null) {
+          _categorySource = chosen.id == _mlSuggestedGroupId
+              ? CategorySource.mlSuggestedAccepted
+              : CategorySource.mlSuggestedIgnored;
+        } else {
+          _categorySource = CategorySource.userManual;
+        }
+        _selectedGroup = chosen;
       });
     }
   }
@@ -100,6 +173,7 @@ class _AddTransactionState extends State<AddTransaction> {
       setState(() {
         _noteValue = result['note'];
       });
+      _triggerLiveMlPrediction(_noteValue);
     }
   }
 
@@ -146,7 +220,9 @@ class _AddTransactionState extends State<AddTransaction> {
     if (result != null) {
       setState(() {
         _selectedWallet = result['wallet'];
-        _currency = _selectedWallet.currency!;
+        _currency = CurrencyProvider.currentCurrency;
+        double parsedAmount = amountField.text.isEmpty ? 0 : Utils.unCurrencyFormat(amountField.text);
+        _amount = _currency == 'USD' ? parsedAmount * 26294.0 : parsedAmount;
       });
     }
   }
@@ -202,13 +278,31 @@ class _AddTransactionState extends State<AddTransaction> {
       amountField.text = '0';
       _selectedGroup = GroupModel(0, 0, name: null, icon: null, type: "expense");
       _currency = CurrencyProvider.currentCurrency;
+      if (widget.initialScanData != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _applyScanResultMap(widget.initialScanData!);
+          });
+        });
+      }
     }
     amountField.addListener(() {
-      setState(() {
-        double parsedAmount = amountField.text.isEmpty ? 0 : Utils.unCurrencyFormat(amountField.text);
-        _amount = _currency == 'USD' ? parsedAmount * 26294.0 : parsedAmount;
-        _isCleanAmount = amountField.text.isNotEmpty;
-      });
+      final double parsedAmount = amountField.text.isEmpty ? 0 : Utils.unCurrencyFormat(amountField.text);
+      _amount = _currency == 'USD' ? parsedAmount * 26294.0 : parsedAmount;
+      final bool nextClean = amountField.text.isNotEmpty;
+      final bool prevSubmit = _isSubmitEdit;
+      if (_isEdit) {
+        _checkSubmitEdit();
+      }
+      // Chỉ gọi setState khi trạng thái nút xóa hoặc nút lưu thực sự thay đổi (tránh rebuild toàn màn hình mỗi phím bấm!)
+      if (nextClean != _isCleanAmount || prevSubmit != _isSubmitEdit) {
+        setState(() {
+          _isCleanAmount = nextClean;
+        });
+      } else {
+        _isCleanAmount = nextClean;
+      }
     });
   }
 
@@ -281,6 +375,8 @@ class _AddTransactionState extends State<AddTransaction> {
         note: _noteValue,
         addToReport: _isAddToReport,
         notifyDate: _isNotification ? _notificationDateTime.toString() : null,
+        // Nếu chưa có nguồn gốc → người dùng tự chọn tay
+        categorySource: _categorySource ?? CategorySource.userManual,
       ));
 
       var wallets = context.read<WalletModelProxy>().getById(_selectedWallet.id);
@@ -319,11 +415,11 @@ class _AddTransactionState extends State<AddTransaction> {
         await context.read<WalletModelProxy>().updateBalance(oldWallet, newBalance);
       }
 
-      transactions.update(TransactionModel(
+      await transactions.update(TransactionModel(
         widget.transactionModel!.id,
         walletId: _selectedWallet.id,
         groupId: _selectedGroup.id,
-        title: "title",
+        title: _selectedGroup.name ?? widget.transactionModel!.title ?? "Giao dịch",
         amount: _amount,
         unit: _currency,
         type: _selectedGroup.type ?? "expense",
@@ -331,31 +427,82 @@ class _AddTransactionState extends State<AddTransaction> {
         note: _noteValue,
         addToReport: _isAddToReport,
         notifyDate: _isNotification ? _notificationDateTime.toString() : null,
+        // Khi edit: giữ nguyên categorySource gốc, hoặc đặt userManual nếu danh mục đã thay đổi
+        categorySource: _categorySource ?? widget.transactionModel!.categorySource ?? CategorySource.userManual,
       ));
 
-      Navigator.of(context, rootNavigator: true).pop(context);
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop(context);
+      }
     }
   }
 
   void _handleQuickCategory(String label) {
-    // Try to find an existing group that matches
+    // Ánh xạ nhãn tiếng Anh trên chip sang tên danh mục tiếng Việt chuẩn trong DB
+    const chipAliases = <String, List<String>>{
+      'Shopping': ['mua sắm', 'shopping'],
+      'Bills': ['tiền điện', 'tiền nước', 'tiền internet', 'thanh toán hóa đơn', 'hóa đơn'],
+    };
+    final searchTerms = chipAliases[label] ?? [label.toLowerCase()];
+
     final allGroups = context.read<GroupModelProxy>().getAll();
     GroupModel? matchedGroup;
     
-    for (var group in allGroups) {
-      if (group.name?.toLowerCase().contains(label.toLowerCase()) ?? false) {
-        matchedGroup = group;
-        break;
+    for (final term in searchTerms) {
+      for (final group in allGroups) {
+        if (group.name?.toLowerCase().contains(term) ?? false) {
+          matchedGroup = group;
+          break;
+        }
       }
+      if (matchedGroup != null) break;
     }
     
     if (matchedGroup != null) {
-      setState(() => _selectedGroup = matchedGroup!);
+      setState(() {
+        _selectedGroup = matchedGroup!;
+        // Quick chip là lựa chọn chủ động của người dùng → nhãn đáng tin cậy
+        _categorySource = CategorySource.quickChip;
+        _mlSuggestedGroupId = null; // reset ML suggestion
+      });
     } else {
       // If not found, open the selection page so they can map or create it
       _moveToListGroupPage(context);
     }
   }
+
+  static final NumberFormat _amountWholeFormatter =
+      NumberFormat.currency(customPattern: '###,###', symbol: "", decimalDigits: 0);
+  static final List<TextInputFormatter> _cachedAmountInputFormatters = [
+    TextInputFormatter.withFunction((oldValue, newValue) {
+      if (newValue.text.isEmpty) {
+        return newValue.copyWith(text: "0", selection: const TextSelection.collapsed(offset: 1));
+      }
+      String cleanText = newValue.text.replaceAll(RegExp(r'[^0-9.]'), '');
+      if (cleanText.indexOf('.') != cleanText.lastIndexOf('.')) return oldValue;
+      if (cleanText.startsWith('.')) cleanText = '0$cleanText';
+      if (cleanText.endsWith('.') || cleanText.contains('.0')) {
+        return newValue.copyWith(text: cleanText, selection: TextSelection.collapsed(offset: cleanText.length));
+      }
+      final double? val = double.tryParse(cleanText);
+      if (val != null) {
+        String formatted;
+        if (cleanText.contains('.')) {
+          final List<String> parts = cleanText.split('.');
+          final String wholePart = parts[0];
+          String decimalPart = parts.length > 1 ? parts[1] : '';
+          if (decimalPart.length > 2) decimalPart = decimalPart.substring(0, 2);
+          final double wholeVal = double.tryParse(wholePart) ?? 0;
+          final String formattedWhole = _amountWholeFormatter.format(wholeVal);
+          formatted = '$formattedWhole.$decimalPart';
+        } else {
+          formatted = _amountWholeFormatter.format(val);
+        }
+        return newValue.copyWith(text: formatted.trim(), selection: TextSelection.collapsed(offset: formatted.trim().length));
+      }
+      return newValue;
+    })
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -377,37 +524,7 @@ class _AddTransactionState extends State<AddTransaction> {
     final iconColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
     final accentColor = const Color(0xFF1976D2); // Brand Blue
 
-    // Setup input formatter logic extracted from the original code
-    final amountInputFormatters = [
-      TextInputFormatter.withFunction((oldValue, newValue) {
-        if (newValue.text.isEmpty) {
-          return newValue.copyWith(text: "0", selection: const TextSelection.collapsed(offset: 1));
-        }
-        String cleanText = newValue.text.replaceAll(RegExp(r'[^0-9.]'), '');
-        if (cleanText.indexOf('.') != cleanText.lastIndexOf('.')) return oldValue;
-        if (cleanText.startsWith('.')) cleanText = '0$cleanText';
-        if (cleanText.endsWith('.') || cleanText.contains('.0')) {
-            return newValue.copyWith(text: cleanText, selection: TextSelection.collapsed(offset: cleanText.length));
-        }
-        double? val = double.tryParse(cleanText);
-        if (val != null) {
-          String formatted;
-          if (cleanText.contains('.')) {
-            List<String> parts = cleanText.split('.');
-            String wholePart = parts[0];
-            String decimalPart = parts.length > 1 ? parts[1] : '';
-            if (decimalPart.length > 2) decimalPart = decimalPart.substring(0, 2);
-            double wholeVal = double.tryParse(wholePart) ?? 0;
-            String formattedWhole = NumberFormat.currency(customPattern: '###,###', symbol: "", decimalDigits: 0).format(wholeVal);
-            formatted = '$formattedWhole.$decimalPart';
-          } else {
-            formatted = NumberFormat.currency(customPattern: '###,###', symbol: "", decimalDigits: 0).format(val);
-          }
-          return newValue.copyWith(text: formatted.trim(), selection: TextSelection.collapsed(offset: formatted.trim().length));
-        }
-        return newValue;
-      })
-    ];
+    final amountInputFormatters = _cachedAmountInputFormatters;
 
     return GestureDetector(
       onTap: () => FocusScope.of(context).requestFocus(FocusNode()),
@@ -424,43 +541,35 @@ class _AddTransactionState extends State<AddTransaction> {
           ),
           actions: [
             if (!_isEdit)
-              IconButton(
-                tooltip: s.get('scan_receipt') ?? 'Quét hóa đơn',
-                icon: const Icon(Icons.document_scanner_outlined, color: Colors.orange),
-                onPressed: () async {
-                  final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const ReceiptScanScreen()));
-                  if (!mounted) return;
-                  if (result is Map) {
-                    final groups = context.read<GroupModelProxy>().getAll();
-                    setState(() {
-                      if (result['amount'] is num && (result['amount'] as num) > 0) {
-                        final amount = (result['amount'] as num).toDouble();
-                        // OCR extracts whole VND; keep the scanned amount and unit together.
-                        _currency = 'VND';
-                        amountField.text = Utils.currencyFormat(
-                          amount,
-                          withoutUnit: true,
-                          rawFormat: true,
-                        );
-                      }
-                      if (result['merchantName'] is String && (result['merchantName'] as String).isNotEmpty) {
-                        _noteValue = result['merchantName'] as String;
-                      }
-                      if (result['transactionDate'] is DateTime) {
-                        _dateTime = result['transactionDate'] as DateTime;
-                      }
-                      final id = result['suggestedGroupId'];
-                      if (id is int) {
-                        for (final group in groups) {
-                          if (group.id == id && group.type == 'expense') {
-                            _selectedGroup = group;
-                            break;
-                          }
-                        }
-                      }
-                    });
-                  }
-                },
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: TextButton.icon(
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFF0D9488),
+                    backgroundColor: const Color(0xFF0D9488).withValues(alpha: 0.12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                  icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+                  label: const Text(
+                    'Quét QR / HĐ',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  onPressed: () async {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ReceiptScanScreen()),
+                    );
+                    if (!mounted) return;
+                    if (result is Map) {
+                      setState(() {
+                        _applyScanResultMap(result);
+                      });
+                    }
+                  },
+                ),
               ),
           ],
         ),
@@ -473,6 +582,71 @@ class _AddTransactionState extends State<AddTransaction> {
                   padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
                   keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                   children: [
+                    if (!_isEdit) ...[
+                      InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () async {
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const ReceiptScanScreen(),
+                            ),
+                          );
+                          if (!mounted) return;
+                          if (result is Map) {
+                            setState(() {
+                              _applyScanResultMap(result);
+                            });
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 11,
+                          ),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF0D9488), Color(0xFF10B981)],
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                            ),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(Icons.document_scanner_rounded,
+                                  color: Colors.white, size: 22),
+                              SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Quét Mã QR Hóa Đơn hoặc Ảnh Biên Lai',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Tự động điền Số tiền, Cửa hàng & Phân loại danh mục bằng ML',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 11.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(Icons.chevron_right_rounded,
+                                  color: Colors.white),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     // Card 1: Amount & Category
                     Container(
                       decoration: BoxDecoration(
@@ -589,8 +763,74 @@ class _AddTransactionState extends State<AddTransaction> {
                             ),
                           ),
                           
-                          const SizedBox(height: 12),
-                          // Quick Category Chips
+                            const SizedBox(height: 12),
+                            if (_liveMlPrediction != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 10.0),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(10),
+                                  onTap: () {
+                                    final groups = context
+                                        .read<GroupModelProxy>()
+                                        .getAll();
+                                    final match = groups
+                                        .where((g) =>
+                                            g.id == _liveMlPrediction!.groupId)
+                                        .toList();
+                                    if (match.isNotEmpty) {
+                                      setState(() {
+                                        _selectedGroup = match.first;
+                                        _mlSuggestedGroupId = match.first.id;
+                                        _categorySource =
+                                            CategorySource.mlSuggestedAccepted;
+                                      });
+                                    }
+                                  },
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 7,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF6366F1)
+                                          .withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: const Color(0xFF6366F1)
+                                            .withValues(alpha: 0.35),
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        const Icon(
+                                          Icons.auto_awesome_rounded,
+                                          size: 16,
+                                          color: Color(0xFF6366F1),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            'Gợi ý ML: ${_liveMlPrediction!.groupName} (${(_liveMlPrediction!.confidence * 100).toStringAsFixed(0)}% tin cậy)',
+                                            style: const TextStyle(
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w600,
+                                              color: Color(0xFF4F46E5),
+                                            ),
+                                          ),
+                                        ),
+                                        if (_selectedGroup.id ==
+                                            _liveMlPrediction!.groupId)
+                                          const Icon(
+                                            Icons.check_circle_rounded,
+                                            size: 16,
+                                            color: Color(0xFF059669),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            // Quick Category Chips
                           SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
                             child: Row(
@@ -687,6 +927,7 @@ class _AddTransactionState extends State<AddTransaction> {
                                                 setState(() {
                                                   _noteValue = _noteValue.isEmpty ? tag : '$_noteValue, $tag';
                                                 });
+                                                _triggerLiveMlPrediction(_noteValue);
                                               },
                                             ),
                                           );

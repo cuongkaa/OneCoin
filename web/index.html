@@ -100,12 +100,68 @@
           }
     }
   </style>
+  <!-- Thư viện giải mã QR trực tiếp cho trình duyệt Web (hỗ trợ cả MobileScanner Web & quét ảnh tĩnh) -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js" defer=""></script>
   <script id="splash-screen-script">
     function removeSplashFromWeb() {
       document.getElementById("splash")?.remove();
       document.getElementById("splash-branding")?.remove();
       document.body.style.background = "transparent";
     }
+
+    // Giải mã QR đa tầng trên Web: ưu tiên BarcodeDetector phần cứng, fallback sang jsQR trên Canvas
+    window.omcDetectQrFromBase64 = async function(base64Data, mimeType) {
+      try {
+        const res = await fetch("data:" + (mimeType || "image/jpeg") + ";base64," + base64Data);
+        const blob = await res.blob();
+        const bitmap = await createImageBitmap(blob);
+
+        if ('BarcodeDetector' in window) {
+          try {
+            const detector = new BarcodeDetector({
+              formats: ["qr_code", "aztec", "data_matrix", "code_128", "ean_13"]
+            });
+            const barcodes = await detector.detect(bitmap);
+            if (barcodes && barcodes.length > 0) {
+              const found = barcodes.map(b => b.rawValue || "").filter(Boolean).join("\n");
+              if (found) {
+                if (bitmap.close) bitmap.close();
+                return found;
+              }
+            }
+          } catch (_) {}
+        }
+
+        if (typeof window.jsQR === "function") {
+          const maxDim = 1200;
+          let w = bitmap.width;
+          let h = bitmap.height;
+          if (w > maxDim || h > maxDim) {
+            const scale = maxDim / Math.max(w, h);
+            w = Math.round(w * scale);
+            h = Math.round(h * scale);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d", { willReadFrequently: true });
+          ctx.drawImage(bitmap, 0, 0, w, h);
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const code = window.jsQR(imgData.data, w, h, { inversionAttempts: "attemptBoth" });
+          if (bitmap.close) bitmap.close();
+          if (code && code.data) {
+            return code.data;
+          }
+          return "";
+        }
+
+        if (bitmap.close) bitmap.close();
+        return "";
+      } catch (err) {
+        console.warn("QR Web decode fallback:", err);
+        return "";
+      }
+    };
   </script>
   <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport">
 </head>

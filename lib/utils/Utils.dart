@@ -11,6 +11,10 @@ import 'package:onemorecoin/utils/currency_provider.dart';
 import 'package:onemorecoin/utils/app_localizations.dart';
 
 class Utils {
+  static final NumberFormat _vndFormatter =
+      NumberFormat.currency(customPattern: '###,###', symbol: '', decimalDigits: 0);
+  static final NumberFormat _usdFormatter =
+      NumberFormat.currency(customPattern: '#,##0.00', symbol: '', decimalDigits: 2);
 
   static String translateTabName(BuildContext context, String name) {
     if (name.startsWith("Tháng ")) {
@@ -50,6 +54,7 @@ class Utils {
     'Sức khỏe': 'Health',
     'Giải trí': 'Entertainment',
     'Tiền nhà': 'Rent',
+    'Tiền điện': 'Electricity Bill',
     'Tiền nước': 'Water Bill',
     'Tiền internet': 'Internet',
     'Tiền điện thoại': 'Phone Bill',
@@ -157,13 +162,7 @@ class Utils {
   }
 
   static DateTime convertDateTimeFullDay(DateTime date) {
-    final DateFormat serverFormater = DateFormat('dd-MM-yyyy');
-    final String formatted = serverFormater.format(date);
-    DateTime dateTime = serverFormater.parse(formatted)
-        .add(const Duration(hours: 23))
-        .add(const Duration(minutes: 59))
-        .add(const Duration(seconds: 59));
-    return dateTime;
+    return DateTime(date.year, date.month, date.day, 23, 59, 59);
   }
 
   static String dateToString(DateTime dateTime){
@@ -309,25 +308,36 @@ class Utils {
   }
 
   static double sumBudgetAmountTransaction(List<BudgetModel> budgetModels, TransactionModelProxy transactionModelProxy){
-    double sum = 0;
-    for(BudgetModel budgetModel in budgetModels){
-      sum += sumAmountTransaction(transactionModelProxy.getAllForBudget(budgetModel.groupId, budgetModel.walletId, budgetModel.fromDate, budgetModel.toDate));
+    final seenIds = <String>{};
+    double totalExpense = 0;
+    for (final budgetModel in budgetModels) {
+      final txns = transactionModelProxy.getAllForBudget(
+        budgetModel.groupId,
+        budgetModel.walletId,
+        budgetModel.fromDate,
+        budgetModel.toDate,
+      );
+      for (final t in txns) {
+        if (t.type == 'expense' && seenIds.add(t.id)) {
+          totalExpense += (t.amount ?? 0);
+        }
+      }
     }
-    return sum;
+    return -totalExpense;
   }
 
   static String currencyFormat(double amount, {bool withoutUnit = false, bool rawFormat = false}) {
     if (!rawFormat && CurrencyProvider.currentCurrency == 'USD') {
-      String formatted = NumberFormat.currency(customPattern: '#,##0.00', symbol: "", decimalDigits: 2).format(amount / 26294.0);
+      final formatted = _usdFormatter.format(amount / 26294.0);
       return withoutUnit ? formatted : "\$$formatted";
     }
-    String result =  NumberFormat.currency(customPattern: '###,###', symbol: "", decimalDigits: 0).format(amount);
+    final result = _vndFormatter.format(amount);
     return withoutUnit ? result : "$result VND";
   }
 
   static String currencyFormatShort(double amount) {
     if (CurrencyProvider.currentCurrency == 'USD') {
-      return "\$${NumberFormat.currency(customPattern: '#,##0.00', symbol: "", decimalDigits: 2).format(amount / 26294.0)}";
+      return "\$${_usdFormatter.format(amount / 26294.0)}";
     }
     if (amount >= 1000) {
       return '${(amount / 1000).toStringAsFixed(0)}k';

@@ -254,7 +254,7 @@ class LoanProvider extends ChangeNotifier {
     );
     // Soft delete associated payments
     await db.update('loan_payments', {'isDeleted': 1, 'updatedAt': now}, where: 'loanId = ?', whereArgs: [id]);
-    await NotificationHelper.instance.cancelNotification(id.hashCode);
+    await NotificationHelper.instance.cancelNotification(id.hashCode & 0x7FFFFFFF);
     await fetchAll();
   }
 
@@ -265,13 +265,38 @@ class LoanProvider extends ChangeNotifier {
     await fetchAll();
   }
 
-  // Payment management
+  // Payment management (chỉ lấy các bản ghi chưa xóa mềm)
   Future<List<LoanPayment>> getPayments(String loanId) async {
     final db = await DatabaseHelper.instance.database;
-    final maps = await db.query('loan_payments', where: 'loanId = ?', whereArgs: [loanId]);
+    final maps = await db.query(
+      'loan_payments',
+      where: 'loanId = ? AND (isDeleted = 0 OR isDeleted IS NULL)',
+      whereArgs: [loanId],
+    );
     final payments = maps.map((e) => LoanPayment.fromMap(e)).toList();
-    payments.sort((a, b) => DateTime.parse(b.date).compareTo(DateTime.parse(a.date)));
+    payments.sort((a, b) => (DateTime.tryParse(b.date) ?? DateTime(1970))
+        .compareTo(DateTime.tryParse(a.date) ?? DateTime(1970)));
     return payments;
+  }
+
+  Future<void> _recalculateLoanPaidAmount(String loanId) async {
+    final loan = getById(loanId);
+    if (loan == null) return;
+    final activePayments = await getPayments(loanId);
+    final totalPaid = activePayments.fold<double>(0.0, (sum, p) => sum + p.amount);
+    final loanAmt = loan.amount ?? 0.0;
+    if (totalPaid <= 0) {
+      loan.paidAmount = 0;
+      loan.status = 'unpaid';
+    } else if (totalPaid >= loanAmt && loanAmt > 0) {
+      loan.paidAmount = loanAmt;
+      loan.status = 'paid';
+      await NotificationHelper.instance.cancelNotification(loan.id.hashCode & 0x7FFFFFFF);
+    } else {
+      loan.paidAmount = totalPaid;
+      loan.status = 'partial';
+    }
+    await update(loan);
   }
 
   Future<void> addPayment(LoanPayment payment) async {
@@ -284,19 +309,7 @@ class LoanProvider extends ChangeNotifier {
       payload: payment.toMap(),
     );
 
-    // Update loan paidAmount and status
-    final loan = getById(payment.loanId);
-    if (loan != null) {
-      loan.paidAmount = (loan.paidAmount ?? 0) + payment.amount;
-      if (loan.paidAmount! >= loan.amount!) {
-        loan.status = 'paid';
-        loan.paidAmount = loan.amount;
-        await NotificationHelper.instance.cancelNotification(loan.id.hashCode);
-      } else {
-        loan.status = 'partial';
-      }
-      await update(loan);
-    }
+    await _recalculateLoanPaidAmount(payment.loanId);
   }
 
   Future<void> deletePayment(LoanPayment payment) async {
@@ -310,18 +323,7 @@ class LoanProvider extends ChangeNotifier {
       payload: {'id': payment.id, 'isDeleted': 1},
     );
 
-    // Update loan paidAmount and status
-    final loan = getById(payment.loanId);
-    if (loan != null) {
-      loan.paidAmount = (loan.paidAmount ?? 0) - payment.amount;
-      if (loan.paidAmount! <= 0) {
-        loan.status = 'unpaid';
-        loan.paidAmount = 0;
-      } else {
-        loan.status = 'partial';
-      }
-      await update(loan);
-    }
+    await _recalculateLoanPaidAmount(payment.loanId);
   }
 
   double getTotalBorrowed() {

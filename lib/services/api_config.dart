@@ -1,12 +1,12 @@
 /// API Configuration
-/// Thay đổi baseUrl tùy theo môi trường:
-/// - Android Emulator: http://10.0.2.2:3000
-/// - iOS Simulator: http://localhost:3000
-/// - Thiết bị thật (cùng Wi-Fi): http://<IP_máy_tính>:3000
-/// - Production: https://api.yourdomain.com
+/// Có thể truyền URL Backend local khi chạy dev để phản hồi tức thì (<5ms) thay vì chờ Render Cloud:
+///   Android Emulator: flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3000
+///   Windows / Web / iOS Simulator: flutter run --dart-define=API_BASE_URL=http://localhost:3000
 class ApiConfig {
-  // Render Cloud Deployment
-  static const String baseUrl = 'https://onemorecoin.onrender.com';
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'https://onecoin-backend.onrender.com',
+  );
 
   // Auth endpoints
   static const String login = '$baseUrl/auth/login';
@@ -24,11 +24,14 @@ class ApiConfig {
   static const String transactionsSync = '$baseUrl/transactions/sync';
   static const String budgets = '$baseUrl/budgets';
   static const String loans = '$baseUrl/loans';
+  static const String loanPayments = '$baseUrl/loans/payments';
   static const String reminders = '$baseUrl/reminders';
 
-  // Sync endpoints
+  // Sync & AI endpoints
   static const String syncUpload = '$baseUrl/sync/upload';
   static const String syncDownload = '$baseUrl/sync/download';
+  static const String aiParseTransaction = '$baseUrl/ai/parse-transaction';
+  static const String aiScanReceipt = '$baseUrl/ai/scan-receipt';
 
   // Health check
   static const String health = '$baseUrl/health';

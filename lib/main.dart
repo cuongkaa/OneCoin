@@ -1,4 +1,4 @@
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -40,12 +40,8 @@ void main() async {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  try {
-    await dotenv.load(fileName: ".env");
-  } catch (e) {
-    print("Cannot load .env file: $e");
-  }
-  await NotificationHelper.instance.init();
+  // Khởi tạo thông báo bất đồng bộ để không chặn khung hình đầu tiên lúc mở ứng dụng
+  unawaited(NotificationHelper.instance.init());
   BackgroundSync.instance.init();
   runApp(
     ChangeNotifierProvider(
@@ -75,8 +71,6 @@ class MyApp extends StatelessWidget {
       overlayColor: Colors.grey.withValues(alpha: 0.8),
       child: MultiProvider(
           providers: [
-            Provider(create: (context) => TransactionModelProxy()),
-            Provider(create: (context) => BudgetModelProxy()),
             ChangeNotifierProvider(create: (context) => TransactionModelProxy()),
             ChangeNotifierProvider(create: (context) => BudgetModelProxy()),
             ChangeNotifierProvider(create: (context) => WalletModelProxy()),

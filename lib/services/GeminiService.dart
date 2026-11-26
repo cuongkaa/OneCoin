@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import '../model/GroupModel.dart';
 import '../model/WalletModel.dart';
+import 'api_config.dart';
+import 'api_service.dart';
 
 enum ChatIntent { addTransaction, queryTransactions, createWallet }
 
@@ -199,15 +200,47 @@ class GeminiService {
   }
 
   // ========================
-  // GEMINI API (online)
+  // GEMINI AI (1. Backend Proxy -> 2. --dart-define Local Dev -> 3. Offline Fallback)
   // ========================
+  static const double usdToVndRate = 26294.0;
+
   static Future<TransactionExtracted?> _tryGeminiAPI(
       String userInput, List<GroupModel> groups, List<WalletModel> wallets, String locale, String currentCurrency) async {
-    String? rawKey = dotenv.env['GEMINI_API_KEY'];
-    if (rawKey != null) {
-      rawKey = rawKey.replaceAll('"', '').replaceAll("'", '').trim();
+    // 1. Ưu tiên gọi qua Backend AI Proxy (Bảo vệ tuyệt đối GEMINI_API_KEY trên Server)
+    if (await ApiService.instance.hasToken()) {
+      try {
+        final proxyRes = await ApiService.instance.post(
+          ApiConfig.aiParseTransaction,
+          {
+            'userInput': userInput,
+            'groups': groups
+                .map((g) => {'id': g.id, 'name': g.name, 'type': g.type})
+                .toList(),
+            'wallets': wallets
+                .map((w) => {'id': w.id, 'name': w.name})
+                .toList(),
+            'locale': locale,
+            'currentCurrency': currentCurrency,
+          },
+        );
+        if (proxyRes['success'] == true && proxyRes['data']?['result'] is Map) {
+          final extracted = TransactionExtracted.fromJson(
+            Map<String, dynamic>.from(proxyRes['data']['result'] as Map),
+          );
+          if (extracted.currency == 'USD') {
+            extracted.amount = extracted.amount * usdToVndRate;
+          }
+          return extracted;
+        }
+      } catch (e) {
+        print('Backend AI proxy failed, checking local dev key: $e');
+      }
     }
-    if (rawKey == null || rawKey.isEmpty) return null;
+
+    // 2. Fallback cho môi trường Local Dev qua --dart-define=GEMINI_API_KEY=...
+    const definedKey = String.fromEnvironment('GEMINI_API_KEY');
+    final rawKey = definedKey.replaceAll('"', '').replaceAll("'", '').trim();
+    if (rawKey.isEmpty) return null;
 
     String groupsMapping =
         groups.map((g) => "${g.id}: ${g.name} (${g.type})").join("\n");

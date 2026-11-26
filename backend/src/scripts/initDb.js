@@ -9,7 +9,7 @@ const { pool } = require('../config/database');
 async function initDatabase() {
   const client = await pool.connect();
   try {
-    console.log('Connected to PostgreSQL. Creating tables...');
+    console.log('Connected to PostgreSQL. Creating/migrating tables...');
 
     // Users table
     await client.query(`
@@ -22,21 +22,18 @@ async function initDatabase() {
         role VARCHAR(20) DEFAULT 'user',
         "isLocked" BOOLEAN DEFAULT false,
         "createdAt" TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    // CREATE TABLE IF NOT EXISTS does not update an older users table.
-    await client.query(`
+      );
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "displayName" VARCHAR(255);
       ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20) DEFAULT 'user';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "isLocked" BOOLEAN DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW();
     `);
-    console.log('✅ Table: users');
 
-    // Wallets table
+    // Wallets table (thêm clientId để giữ nguyên ID ví cục bộ theo từng user)
     await client.query(`
       CREATE TABLE IF NOT EXISTS wallets (
         id SERIAL PRIMARY KEY,
+        "clientId" INT,
         name VARCHAR(255),
         icon VARCHAR(255),
         currency VARCHAR(10) DEFAULT 'VND',
@@ -46,14 +43,17 @@ async function initDatabase() {
         "userId" VARCHAR(255) NOT NULL REFERENCES users(id),
         "isDeleted" BOOLEAN DEFAULT false,
         "updatedAt" TIMESTAMP DEFAULT NOW()
-      )
+      );
+      ALTER TABLE wallets ADD COLUMN IF NOT EXISTS "clientId" INT;
+      UPDATE wallets SET "clientId" = id WHERE "clientId" IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_wallets_user_client ON wallets ("userId", "clientId");
     `);
-    console.log('✅ Table: wallets');
 
-    // Groups table
+    // Groups table (thêm clientId để giữ nguyên ID nhóm danh mục theo từng user)
     await client.query(`
       CREATE TABLE IF NOT EXISTS groups (
         id SERIAL PRIMARY KEY,
+        "clientId" INT,
         name VARCHAR(255),
         type VARCHAR(50),
         icon VARCHAR(255),
@@ -63,11 +63,13 @@ async function initDatabase() {
         "userId" VARCHAR(255) NOT NULL REFERENCES users(id),
         "isDeleted" BOOLEAN DEFAULT false,
         "updatedAt" TIMESTAMP DEFAULT NOW()
-      )
+      );
+      ALTER TABLE groups ADD COLUMN IF NOT EXISTS "clientId" INT;
+      UPDATE groups SET "clientId" = id WHERE "clientId" IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_user_client ON groups ("userId", "clientId");
     `);
-    console.log('✅ Table: groups');
 
-    // Transactions table
+    // Transactions table (bổ sung categorySource cho mô hình ML)
     await client.query(`
       CREATE TABLE IF NOT EXISTS transactions_table (
         id VARCHAR(255) PRIMARY KEY,
@@ -81,17 +83,19 @@ async function initDatabase() {
         "notifyDate" VARCHAR(50),
         "walletId" INT,
         "groupId" INT,
+        "categorySource" VARCHAR(50),
         "userId" VARCHAR(255) NOT NULL REFERENCES users(id),
         "isDeleted" BOOLEAN DEFAULT false,
         "updatedAt" TIMESTAMP DEFAULT NOW()
-      )
+      );
+      ALTER TABLE transactions_table ADD COLUMN IF NOT EXISTS "categorySource" VARCHAR(50);
     `);
-    console.log('✅ Table: transactions_table');
 
-    // Budgets table
+    // Budgets table (thêm clientId để không bị nhân bản khi đồng bộ)
     await client.query(`
       CREATE TABLE IF NOT EXISTS budgets (
         id SERIAL PRIMARY KEY,
+        "clientId" INT,
         title VARCHAR(255),
         budget DOUBLE PRECISION,
         unit VARCHAR(10) DEFAULT 'VND',
@@ -106,9 +110,11 @@ async function initDatabase() {
         "userId" VARCHAR(255) NOT NULL REFERENCES users(id),
         "isDeleted" BOOLEAN DEFAULT false,
         "updatedAt" TIMESTAMP DEFAULT NOW()
-      )
+      );
+      ALTER TABLE budgets ADD COLUMN IF NOT EXISTS "clientId" INT;
+      UPDATE budgets SET "clientId" = id WHERE "clientId" IS NULL;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_budgets_user_client ON budgets ("userId", "clientId");
     `);
-    console.log('✅ Table: budgets');
 
     // Reminders table
     await client.query(`
@@ -127,7 +133,6 @@ async function initDatabase() {
         "updatedAt" TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log('✅ Table: reminders');
 
     // Loans table
     await client.query(`
@@ -151,9 +156,13 @@ async function initDatabase() {
         "updatedAt" TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log('✅ Table: loans');
 
     // Loan Payments table
+    await client.query(`
+      CREATE TABLE loan_payments_dummy_check (x int);
+      DROP TABLE loan_payments_dummy_check;
+    `).catch(() => {});
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS loan_payments (
         id VARCHAR(255) PRIMARY KEY,
@@ -167,7 +176,6 @@ async function initDatabase() {
         "updatedAt" TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log('✅ Table: loan_payments');
 
     // App Notifications table
     await client.query(`
@@ -182,7 +190,6 @@ async function initDatabase() {
         "userId" VARCHAR(255) NOT NULL REFERENCES users(id)
       )
     `);
-    console.log('✅ Table: app_notifications');
 
     // Processed Requests table (Idempotency)
     await client.query(`
@@ -194,7 +201,6 @@ async function initDatabase() {
         "processedAt" TIMESTAMP DEFAULT NOW()
       )
     `);
-    console.log('✅ Table: processed_requests');
 
     // Refresh Tokens table
     await client.query(`
@@ -206,15 +212,12 @@ async function initDatabase() {
         "userAgent" VARCHAR(500),
         "expiresAt" TIMESTAMP,
         "createdAt" TIMESTAMP DEFAULT NOW()
-      )
-    `);
-    await client.query(`
+      );
       ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS "deviceId" VARCHAR(255);
       ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS "userAgent" VARCHAR(500);
       ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS "expiresAt" TIMESTAMP;
       ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP DEFAULT NOW();
     `);
-    console.log('✅ Table: refresh_tokens');
 
     // Data Deletion Requests table
     await client.query(`
@@ -226,9 +229,8 @@ async function initDatabase() {
         "processedAt" TIMESTAMP
       )
     `);
-    console.log('✅ Table: data_deletion_requests');
 
-    console.log('\n🎉 All tables created successfully!');
+    console.log('🎉 All PostgreSQL tables & indexes verified successfully!');
   } finally {
     client.release();
   }

@@ -37,4 +37,26 @@ void main() {
     expect(OfflineReceiptResult.fromText('Shop\nTotal: 1 đ').totalAmount,
         1);
   });
+
+  test('reconstructs horizontal lines from 2D spatial bounding boxes and fixes OCR noise', () {
+    final spatialLines = [
+      const SpatialTextLine(
+          text: 'PHÚC LONG COFFEE & TEA', top: 10, bottom: 32, left: 20, right: 240),
+      const SpatialTextLine(
+          text: 'Ngày 18 tháng 11 năm 2026', top: 45, bottom: 60, left: 20, right: 200),
+      // Two columns on the same horizontal row (Y ~ 120..136)
+      const SpatialTextLine(
+          text: 'Thanh toán:', top: 120, bottom: 136, left: 20, right: 110),
+      const SpatialTextLine(
+          text: '65.O00 đ', top: 121, bottom: 137, left: 180, right: 260),
+    ];
+    final result = OfflineReceiptResult.fromText(
+      'PHÚC LONG COFFEE & TEA\nThanh toán:\nTiền khách đưa: 100.000\n65.O00 đ',
+      spatialLines: spatialLines,
+    );
+    expect(result.merchantName, 'PHÚC LONG COFFEE & TEA');
+    expect(result.transactionDate, DateTime(2026, 11, 18));
+    expect(result.totalAmount, 65000);
+    expect(result.confidence, greaterThanOrEqualTo(0.9));
+  });
 }

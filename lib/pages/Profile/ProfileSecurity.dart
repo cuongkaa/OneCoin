@@ -101,18 +101,18 @@ class _ProfileSecurityState extends State<ProfileSecurity> {
             TextButton(
               onPressed: () async {
                 Navigator.pop(ctx);
-                // Verify old pin to remove
                 final verifyOld = await Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => PinDialog(title: s.get('enter_pin') ?? "Nhập mã PIN hiện tại")
+                  builder: (_) => PinDialog(
+                    title: s.get('enter_pin') ?? "Nhập mã PIN hiện tại",
+                    onVerify: (p) => proxy.verifyPin(_username, p),
+                    getLockSeconds: () => proxy.getPinLockRemainingSeconds(_username),
+                  )
                 ));
                 if (verifyOld != null) {
-                  final isValid = await proxy.verifyPin(_username, verifyOld);
-                  if (isValid) {
-                    await proxy.removePin(_username);
+                  await proxy.removePin(_username);
+                  if (mounted) {
                     setState(() { _hasPin = false; });
                     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.get('pin_removed') ?? "Đã xoá mã PIN"), backgroundColor: Colors.green));
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.get('incorrect_pin') ?? "Mã PIN không chính xác"), backgroundColor: Colors.red));
                   }
                 }
               },
@@ -122,20 +122,24 @@ class _ProfileSecurityState extends State<ProfileSecurity> {
               onPressed: () async {
                 Navigator.pop(ctx);
                 final verifyOld = await Navigator.push(context, MaterialPageRoute(
-                  builder: (_) => PinDialog(title: s.get('enter_pin') ?? "Nhập mã PIN hiện tại")
+                  builder: (_) => PinDialog(
+                    title: s.get('enter_pin') ?? "Nhập mã PIN hiện tại",
+                    onVerify: (p) => proxy.verifyPin(_username, p),
+                    getLockSeconds: () => proxy.getPinLockRemainingSeconds(_username),
+                  )
                 ));
-                if (verifyOld != null) {
-                  final isValid = await proxy.verifyPin(_username, verifyOld);
-                  if (isValid) {
-                    final newPin = await Navigator.push(context, MaterialPageRoute(
-                      builder: (_) => PinDialog(title: s.get('new_password') ?? "Mã PIN mới")
-                    ));
-                    if (newPin != null) {
-                      await proxy.savePin(_username, newPin);
+                if (verifyOld != null && mounted) {
+                  final newPin = await Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => PinDialog(
+                      title: s.get('new_password') ?? "Mã PIN mới",
+                      confirmMode: true,
+                    )
+                  ));
+                  if (newPin != null) {
+                    await proxy.savePin(_username, newPin);
+                    if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.get('pin_changed') ?? "Đổi mã PIN thành công"), backgroundColor: Colors.green));
                     }
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(s.get('incorrect_pin') ?? "Mã PIN không chính xác"), backgroundColor: Colors.red));
                   }
                 }
               },
@@ -145,9 +149,12 @@ class _ProfileSecurityState extends State<ProfileSecurity> {
         )
       );
     } else {
-      // create pin
+      // create pin (có xác nhận lần 2)
       final newPin = await Navigator.push(context, MaterialPageRoute(
-        builder: (_) => PinDialog(title: s.get('create_pin_code') ?? "Tạo mã PIN")
+        builder: (_) => PinDialog(
+          title: s.get('create_pin_code') ?? "Tạo mã PIN",
+          confirmMode: true,
+        )
       ));
       if (newPin != null) {
         await proxy.savePin(_username, newPin);

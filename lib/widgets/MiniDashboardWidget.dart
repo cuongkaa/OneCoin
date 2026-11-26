@@ -66,15 +66,14 @@ class MiniDashboardWidget extends StatelessWidget {
     final wallet = proxy.walletModel;
     
     double todayExpense = 0;
-    if (wallet.id != 0) {
-      final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
-      // Get all transactions for current wallet, then filter for today's expense
-      final allTrans = proxy.getTransactionByWalletId(wallet.id);
-      
-      for (var t in allTrans) {
-        if (t.type == 'expense' && t.date != null && t.date!.startsWith(todayStr)) {
-          todayExpense += (t.amount ?? 0);
-        }
+    final String todayStr = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final allTrans = wallet.id == 0
+        ? proxy.getAll()
+        : proxy.getTransactionByWalletId(wallet.id);
+
+    for (var t in allTrans) {
+      if (t.type == 'expense' && t.date != null && t.date!.startsWith(todayStr)) {
+        todayExpense += (t.amount ?? 0);
       }
     }
 
@@ -123,23 +122,20 @@ class MiniDashboardWidget extends StatelessWidget {
     double totalBudget = 0;
     double usedBudget = 0;
 
-    if (wallet.id != 0) {
-      final monthStr = DateFormat('yyyy-MM').format(DateTime.now());
-      List<BudgetModel> activeBudgets = budgetProxy.getAllByWalletId(wallet.id);
-      
-      for (var b in activeBudgets) {
-        if (b.fromDate != null) {
-            // Check if budget is active this month
-            if (b.fromDate!.startsWith(monthStr) || (b.isRepeat ?? false)) {
-                totalBudget += (b.budget ?? 0);
-                
-                // Calculate usage
-                for (var t in b.transactions) {
-                  if (t.type == 'expense' && t.date != null && t.date!.startsWith(monthStr)) {
-                    usedBudget += (t.amount ?? 0);
-                  }
-                }
+    final monthStr = DateFormat('yyyy-MM').format(DateTime.now());
+    List<BudgetModel> activeBudgets = wallet.id == 0
+        ? budgetProxy.getAll()
+        : budgetProxy.getAllByWalletId(wallet.id);
+
+    for (var b in activeBudgets) {
+      if (b.fromDate != null) {
+        if (b.fromDate!.startsWith(monthStr) || (b.isRepeat ?? false)) {
+          totalBudget += (b.budget ?? 0);
+          for (var t in b.transactions) {
+            if (t.type == 'expense' && t.date != null && t.date!.startsWith(monthStr)) {
+              usedBudget += (t.amount ?? 0);
             }
+          }
         }
       }
     }

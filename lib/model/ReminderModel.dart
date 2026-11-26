@@ -66,6 +66,8 @@ class ReminderProvider extends ChangeNotifier {
     _loadReminders();
   }
 
+  Future<void> reload() => _loadReminders();
+
   Future<void> _loadReminders() async {
     try {
       final db = await DatabaseHelper.instance.database;

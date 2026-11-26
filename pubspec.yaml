@@ -68,6 +68,7 @@ dependencies:
   timezone: ^0.11.0
   speech_to_text: ^7.0.0
   google_mlkit_text_recognition: ^0.15.1
+  mobile_scanner: ^7.5.0
 
 dev_dependencies:
   flutter_test:
@@ -90,7 +91,7 @@ flutter:
   assets:
     - assets/images/
     - assets/images/icons/
-    - .env
+    - assets/models/
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import '../utils/database_helper.dart';
 import '../services/sync_queue.dart';
@@ -107,29 +108,37 @@ class WalletModelProxy extends ChangeNotifier {
   }
 
   Future<void> add(WalletModel wallet) async {
+    final payload = wallet.toMap();
     final db = await DatabaseHelper.instance.database;
-    await db.insert('wallets', wallet.toMap());
-    // Enqueue sync
-    await SyncQueue.instance.enqueue(
+    await db.insert('wallets', payload);
+    _wallets.add(wallet);
+    _wallets.sort((a, b) => a.index.compareTo(b.index));
+    notifyListeners();
+
+    unawaited(SyncQueue.instance.enqueue(
       tableName: 'wallets',
       actionType: 'create',
       recordId: wallet.id.toString(),
-      payload: wallet.toMap(),
-    );
-    await fetchAll();
+      payload: payload,
+    ));
   }
 
   Future<void> update(WalletModel wallet) async {
+    final payload = wallet.toMap();
     final db = await DatabaseHelper.instance.database;
-    await db.update('wallets', wallet.toMap(), where: 'id = ?', whereArgs: [wallet.id]);
-    // Enqueue sync
-    await SyncQueue.instance.enqueue(
+    await db.update('wallets', payload, where: 'id = ?', whereArgs: [wallet.id]);
+    final idx = _wallets.indexWhere((w) => w.id == wallet.id);
+    if (idx != -1) {
+      _wallets[idx] = wallet;
+    }
+    notifyListeners();
+
+    unawaited(SyncQueue.instance.enqueue(
       tableName: 'wallets',
       actionType: 'update',
       recordId: wallet.id.toString(),
-      payload: wallet.toMap(),
-    );
-    await fetchAll();
+      payload: payload,
+    ));
   }
 
   Future<void> updateBalance(WalletModel wallet, double balance) async {
@@ -140,19 +149,21 @@ class WalletModelProxy extends ChangeNotifier {
   Future<void> delete(WalletModel wallet) async {
     final db = await DatabaseHelper.instance.database;
     final now = DateTime.now().toIso8601String();
-    // Soft delete wallet
-    await db.update('wallets', {'isDeleted': 1, 'updatedAt': now}, where: 'id = ?', whereArgs: [wallet.id]);
-    await SyncQueue.instance.enqueue(
+    final batch = db.batch();
+    batch.update('wallets', {'isDeleted': 1, 'updatedAt': now}, where: 'id = ?', whereArgs: [wallet.id]);
+    batch.update('transactions_table', {'isDeleted': 1, 'updatedAt': now}, where: 'walletId = ?', whereArgs: [wallet.id]);
+    batch.update('budgets', {'isDeleted': 1, 'updatedAt': now}, where: 'walletId = ?', whereArgs: [wallet.id]);
+    await batch.commit(noResult: true);
+
+    _wallets.removeWhere((w) => w.id == wallet.id);
+    notifyListeners();
+
+    unawaited(SyncQueue.instance.enqueue(
       tableName: 'wallets',
       actionType: 'delete',
       recordId: wallet.id.toString(),
       payload: {'id': wallet.id, 'isDeleted': 1},
-    );
-    // Soft delete associated transactions and budgets
-    await db.update('transactions_table', {'isDeleted': 1, 'updatedAt': now}, where: 'walletId = ?', whereArgs: [wallet.id]);
-    await db.update('budgets', {'isDeleted': 1, 'updatedAt': now}, where: 'walletId = ?', whereArgs: [wallet.id]);
-    
-    await fetchAll();
+    ));
   }
 
   Future<void> deleteAll() async {

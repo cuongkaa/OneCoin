@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:onemorecoin/Objects/AlertDiaLogItem.dart';
 
@@ -15,7 +14,8 @@ Future<void> showAlertDialog({
     AlertDiaLogItem? cancelItem,
 }) async {
   TextStyle textStyle = const TextStyle(color: Colors.blue, fontWeight: FontWeight.normal);
-  if (!Platform.isIOS) {
+  final bool isIOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+  if (!isIOS) {
     if (optionItems != null && optionItems.isNotEmpty) {
       return showDialog(
         context: context,

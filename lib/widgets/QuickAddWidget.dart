@@ -131,10 +131,12 @@ class _QuickAddWidgetState extends State<QuickAddWidget> {
     final wallet = proxy.walletModel;
     final s = S.of(context);
     
-    if (wallet.id == 0) {
-      _showPopupNotification(s.get('error') ?? 'Lỗi', s.get('notification_select_wallet') ?? 'Vui lòng chọn ví trước khi thêm!', true);
+    final allWallets = walletProxy.getAll();
+    if (allWallets.isEmpty) {
+      _showPopupNotification(s.get('error') ?? 'Lỗi', s.get('notification_select_wallet') ?? 'Vui lòng tạo ví trước khi thêm!', true);
       return;
     }
+    final targetWalletId = wallet.id != 0 ? wallet.id : allWallets.first.id;
 
     final transaction = TransactionModel(
       DateTime.now().millisecondsSinceEpoch.toString(),
@@ -144,14 +146,14 @@ class _QuickAddWidgetState extends State<QuickAddWidget> {
       type: type, // generally expense
       date: DateTime.now().toString(),
       note: title,
-      walletId: wallet.id,
+      walletId: targetWalletId,
       groupId: groupId,
       addToReport: true,
     );
     
     await proxy.add(transaction);
 
-    var currentWallet = walletProxy.getById(wallet.id);
+    var currentWallet = walletProxy.getById(targetWalletId);
     double newBalance = type == 'expense' ? (currentWallet.balance ?? 0) - amount : (currentWallet.balance ?? 0) + amount;
     await walletProxy.updateBalance(currentWallet, newBalance);
 

@@ -100,10 +100,10 @@ class BudgetModelProxy extends ChangeNotifier {
     final db = await DatabaseHelper.instance.database;
     final maps = await db.query('budgets', where: 'isDeleted = 0 OR isDeleted IS NULL');
     
-    // Dependencies
-    final walletsMaps = await db.query('wallets');
-    final groupsMaps = await db.query('groups');
-    final transMaps = await db.query('transactions_table');
+    // Dependencies (chỉ lấy các bản ghi chưa bị xóa mềm)
+    final walletsMaps = await db.query('wallets', where: 'isDeleted = 0 OR isDeleted IS NULL');
+    final groupsMaps = await db.query('groups', where: 'isDeleted = 0 OR isDeleted IS NULL');
+    final transMaps = await db.query('transactions_table', where: 'isDeleted = 0 OR isDeleted IS NULL');
     
     final wallets = walletsMaps.map((e) => WalletModel.fromMap(e)).toList();
     final groups = groupsMaps.map((e) => GroupModel.fromMap(e)).toList();
@@ -114,8 +114,9 @@ class BudgetModelProxy extends ChangeNotifier {
       b.wallet = wallets.cast<WalletModel?>().firstWhere((w) => w?.id == b.walletId, orElse: () => null);
       b.group = groups.cast<GroupModel?>().firstWhere((g) => g?.id == b.groupId, orElse: () => null);
 
-      // Recreate getAllForBudget logic locally
-      Iterable<TransactionModel> relevantTrans = allTrans;
+      // Chỉ lọc các giao dịch cùng loại với ngân sách (mặc định là 'expense')
+      final targetType = b.type ?? 'expense';
+      Iterable<TransactionModel> relevantTrans = allTrans.where((t) => t.type == targetType);
       if (b.groupId != 0 && b.walletId != 0) {
         relevantTrans = relevantTrans.where((t) => t.groupId == b.groupId && t.walletId == b.walletId);
       } else if (b.groupId != 0) {
@@ -125,19 +126,27 @@ class BudgetModelProxy extends ChangeNotifier {
       }
 
       if (b.fromDate != null && b.toDate != null) {
-        relevantTrans = relevantTrans.where((t) => 
-          DateTime.parse(t.date ?? "").isAfter(DateTime.parse(b.fromDate!).subtract(const Duration(seconds: 1))) && 
-          DateTime.parse(t.date ?? "").isBefore(DateTime.parse(b.toDate!).add(const Duration(seconds: 1)))
-        );
+        final parsedFrom = DateTime.tryParse(b.fromDate!);
+        final parsedTo = DateTime.tryParse(b.toDate!);
+        if (parsedFrom != null && parsedTo != null) {
+          final startBound = DateTime(parsedFrom.year, parsedFrom.month, parsedFrom.day, 0, 0, 0);
+          final endBound = DateTime(parsedTo.year, parsedTo.month, parsedTo.day, 23, 59, 59, 999);
+          relevantTrans = relevantTrans.where((t) {
+            final d = DateTime.tryParse(t.date ?? '');
+            return d != null && !d.isBefore(startBound) && !d.isAfter(endBound);
+          });
+        }
       }
 
       b.transactions = relevantTrans.toList()
-        ..sort((x, y) => DateTime.parse(y.date ?? "").compareTo(DateTime.parse(x.date ?? "")));
+        ..sort((x, y) => (DateTime.tryParse(y.date ?? '') ?? DateTime(1970))
+            .compareTo(DateTime.tryParse(x.date ?? '') ?? DateTime(1970)));
       
       return b;
     }).toList();
 
-    _budgets.sort((a, b) => DateTime.parse(b.fromDate ?? "").compareTo(DateTime.parse(a.fromDate ?? "")));
+    _budgets.sort((a, b) => (DateTime.tryParse(b.fromDate ?? '') ?? DateTime(1970))
+        .compareTo(DateTime.tryParse(a.fromDate ?? '') ?? DateTime(1970)));
     _isLoading = false;
     notifyListeners();
   }

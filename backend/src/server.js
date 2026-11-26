@@ -18,12 +18,15 @@ const loanRoutes = require('./routes/loans');
 const reminderRoutes = require('./routes/reminders');
 const syncRoutes = require('./routes/sync');
 const adminRoutes = require('./routes/admin');
+const aiRoutes = require('./routes/ai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.NODE_ENV === 'production';
 
 // Trust reverse proxy (Render load balancer)
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
 
 // ========================
 // WINSTON LOGGER
@@ -38,18 +41,17 @@ const logger = winston.createLogger({
     new winston.transports.File({
       filename: 'logs/error.log',
       level: 'error',
-      maxsize: 5 * 1024 * 1024, // 5MB
+      maxsize: 5 * 1024 * 1024,
       maxFiles: 5,
     }),
     new winston.transports.File({
       filename: 'logs/combined.log',
-      maxsize: 5 * 1024 * 1024, // 5MB
+      maxsize: 5 * 1024 * 1024,
       maxFiles: 14,
     }),
   ],
 });
 
-// Always enable Console logging for Cloud platforms (Render, Docker, etc.)
 logger.add(new winston.transports.Console({
   format: winston.format.combine(
     winston.format.colorize(),
@@ -57,52 +59,63 @@ logger.add(new winston.transports.Console({
   ),
 }));
 
-// Make logger globally accessible
 app.locals.logger = logger;
+
+// ========================
+// SECURITY HEADERS & CORS
+// ========================
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+});
+
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+  : true;
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+    credentials: true,
+  })
+);
+
+// Giới hạn JSON body 6MB để hỗ trợ tải ảnh hóa đơn/QR nén khi quét Vision AI nhưng vẫn chống OOM DoS
+app.use(express.json({ limit: '6mb' }));
+app.use(express.urlencoded({ extended: true, limit: '6mb' }));
+app.use(requestIdMiddleware);
 
 // ========================
 // RATE LIMITING
 // ========================
-
-// Global rate limit: 100 req/min/IP
 const globalLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 100,
+  windowMs: 60 * 1000,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Quá nhiều yêu cầu. Vui lòng thử lại sau.' },
-  keyGenerator: (req) => {
-    // Rate limit theo userId nếu đã xác thực, fallback về IP
-    return req.userId || req.ip;
-  },
 });
 
-// Auth rate limit: 5 req/min/IP (chống brute-force)
 const authLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Quá nhiều lần thử đăng nhập. Vui lòng thử lại sau 1 phút.' },
-});
-
-// Sync rate limit: 10 req/min/user
-const syncLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Đồng bộ quá thường xuyên. Vui lòng thử lại sau.' },
-  keyGenerator: (req) => req.userId || req.ip,
+  message: { error: 'Quá nhiều lần thử xác thực. Vui lòng thử lại sau 1 phút.' },
 });
 
-// ========================
-// MIDDLEWARE
-// ========================
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-app.use(requestIdMiddleware);
+const syncLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Đồng bộ quá thường xuyên. Vui lòng thử lại sau.' },
+});
+
 app.use(globalLimiter);
 
 // Morgan HTTP logging with requestId
@@ -128,20 +141,18 @@ app.use('/loans', loanRoutes);
 app.use('/reminders', reminderRoutes);
 app.use('/sync', syncLimiter, syncRoutes);
 app.use('/admin', adminRoutes);
+app.use('/ai', aiRoutes);
 
-// Health check
+// Health check (không lộ chi tiết SQL trên môi trường production)
 app.get('/health', async (req, res) => {
   try {
-    await pool.query('SELECT id, username, email, password, "displayName", role, "isLocked" FROM users LIMIT 1');
-    await pool.query('SELECT "userId", token, "deviceId", "userAgent", "expiresAt" FROM refresh_tokens LIMIT 1');
+    await pool.query('SELECT 1 FROM users LIMIT 1');
   } catch (err) {
-    console.error('❌ Health check database error:', err.message, err.code);
     logger.error({ message: 'Health check database error', error: err.message, code: err.code });
     return res.status(503).json({
       status: 'UNAVAILABLE',
       error: 'Cơ sở dữ liệu chưa sẵn sàng',
-      detail: err.message,
-      code: err.code,
+      ...(isProduction ? {} : { detail: err.message }),
     });
   }
   res.json({
@@ -159,7 +170,6 @@ app.use((req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error('Unhandled server error:', err);
   logger.error({
     message: err.message,
     stack: err.stack,
@@ -168,28 +178,32 @@ app.use((err, req, res, next) => {
     method: req.method,
     url: req.originalUrl,
   });
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Dữ liệu gửi lên vượt quá giới hạn cho phép (2MB)' });
+  }
   res.status(500).json({ error: 'Lỗi hệ thống', requestId: req.id });
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 OnMoreCoin API Server running on port ${PORT}`);
-  console.log(`📍 http://localhost:${PORT}`);
-  console.log(`❤️  Health check: http://localhost:${PORT}/health`);
-  
-  if (!process.env.DATABASE_URL) {
-    console.error('❌ WARNING: DATABASE_URL environment variable is missing!');
-  } else if (process.env.DATABASE_URL.includes('localhost') && process.env.NODE_ENV === 'production') {
-    console.error('⚠️ WARNING: DATABASE_URL points to "localhost" in production! Render cannot connect to your personal PC localhost.');
-  }
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`🚀 OnMoreCoin API Server running on port ${PORT}`);
+    if (!process.env.JWT_SECRET) {
+      console.error('❌ CRITICAL: JWT_SECRET environment variable is missing!');
+    }
+    if (!process.env.DATABASE_URL) {
+      console.error('❌ WARNING: DATABASE_URL environment variable is missing!');
+    }
 
-  // Initialize DB tables
-  initDatabase()
-    .then(() => {
-      console.log('✅ Database tables initialized successfully');
-    })
-    .catch((err) => {
-      console.error('❌ Database initialization error:', err.message, err.code);
-      logger.error({ message: 'Database initialization failed', error: err.message, code: err.code });
-    });
-});
+    initDatabase()
+      .then(() => {
+        console.log('✅ Database tables initialized successfully');
+      })
+      .catch((err) => {
+        console.error('❌ Database initialization error:', err.message, err.code);
+        logger.error({ message: 'Database initialization failed', error: err.message, code: err.code });
+      });
+  });
+}
+
+module.exports = app;

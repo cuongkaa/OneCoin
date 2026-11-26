@@ -1,5 +1,4 @@
 
-import 'dart:ffi';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -35,12 +34,25 @@ class _ReportForPeriodState extends State<ReportForPeriod> with TickerProviderSt
 
   final List<Tab> _tabs = <Tab>[];
   List<TabTransaction> listTab = [];
-  late TabController _tabController;
+  TabController? _tabController;
+
+  void _syncTabController(int length, int initialIndex) {
+    if (length <= 0) {
+      _tabController?.dispose();
+      _tabController = null;
+      return;
+    }
+    final safeIndex = initialIndex.clamp(0, length - 1);
+    if (_tabController == null || _tabController!.length != length) {
+      _tabController?.dispose();
+      _tabController = TabController(vsync: this, length: length, initialIndex: safeIndex);
+    }
+  }
 
   @override
-  void initState() {
-    super.initState();
-
+  void dispose() {
+    _tabController?.dispose();
+    super.dispose();
   }
 
   List<Tab> getTabs() {
@@ -207,7 +219,6 @@ class _ReportForPeriodState extends State<ReportForPeriod> with TickerProviderSt
               LayoutBuilder(builder: (BuildContext context, BoxConstraints constraints) {
                 return Center(
                   child: ListView(
-                      controller: ScrollController(),
                       children: [
                         SizedBox(
                             width: constraints.maxWidth,
@@ -276,10 +287,10 @@ class _ReportForPeriodState extends State<ReportForPeriod> with TickerProviderSt
   @override
   Widget build(BuildContext context) {
     context.watch<CurrencyProvider>();
-    listTab = context.read<TransactionModelProxy>().listTab;
-    int? tabIndex = widget.tabIndex ?? (listTab.length > 2 ? listTab.length  - 2 : 0);
-    _tabController = TabController(vsync: this, length: listTab.length, initialIndex: tabIndex);
-    // _calculate(context);
+    listTab = context.watch<TransactionModelProxy>().listTab;
+    final int tabIndex = widget.tabIndex ?? (listTab.length > 2 ? listTab.length - 2 : 0);
+    _syncTabController(listTab.length, tabIndex);
+
     return Scaffold(
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         appBar: AppBar(
@@ -297,32 +308,36 @@ class _ReportForPeriodState extends State<ReportForPeriod> with TickerProviderSt
           },
         ),
       ),
-      body: Column(
-        children: [
-          Container(
-            margin: const EdgeInsets.only(top: 1.0),
-            height: 50,
-            color: Theme.of(context).cardColor,
-            child: TabBar(
-              controller: _tabController,
-                isScrollable: true,
-                tabAlignment: TabAlignment.start,
-                tabs: getTabs()
+      body: _tabController == null
+          ? Center(
+              child: Text(
+                S.of(context).get('no_transactions_yet') ?? "Không có giao dịch nào",
+                style: const TextStyle(color: Colors.grey),
+              ),
+            )
+          : Column(
+              children: [
+                Container(
+                  margin: const EdgeInsets.only(top: 1.0),
+                  height: 50,
+                  color: Theme.of(context).cardColor,
+                  child: TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    tabs: getTabs(),
+                  ),
+                ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      ..._generateListTabTransaction(context, [], listTab),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ),
-          Expanded(
-              child: TabBarView(
-                controller: _tabController,
-                  children: [
-                    ..._generateListTabTransaction(context, [], listTab),
-                    // SizedBox(height: 100),
-                  ]
-              )
-          ),
-
-
-        ],
-      )
     );
   }
 }

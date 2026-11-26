@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:onemorecoin/components/MyButton.dart';
@@ -56,7 +57,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final userId = currentUser['id'];
     final prefs = await SharedPreferences.getInstance();
     final path = prefs.getString('user_avatar_path_$userId');
-    if (path != null && File(path).existsSync()) {
+    if (!kIsWeb && path != null && File(path).existsSync()) {
       if (mounted) {
         setState(() {
           _avatarPath = path;

@@ -35,13 +35,20 @@ class _DetailTransactionState extends State<DetailTransaction> {
     super.initState();
   }
 
-  void _removeTransaction(BuildContext context, TransactionModel transactionModel) {
-    var transactionsProxy = context.read<TransactionModelProxy>();
-    TransactionModel transactions = transactionsProxy.getById(transactionModel.id);
-    var wallet = context.read<WalletModelProxy>().getById(transactions.walletId);
-    double balance = wallet.balance! - (transactions.type == 'income' ? transactions.amount! : -transactions.amount!);
-    context.read<WalletModelProxy>().updateBalance(wallet, balance);
-    context.read<TransactionModelProxy>().delete(transactions);
+  Future<void> _removeTransaction(BuildContext context, TransactionModel transactionModel) async {
+    final transactionsProxy = context.read<TransactionModelProxy>();
+    final walletProxy = context.read<WalletModelProxy>();
+    final transactions = transactionsProxy.getById(transactionModel.id);
+    if (transactions.id == "0") return;
+
+    final existingWallets = walletProxy.getAll().where((w) => w.id == transactions.walletId).toList();
+    if (existingWallets.isNotEmpty) {
+      final wallet = existingWallets.first;
+      final amt = transactions.amount ?? 0;
+      final balance = (wallet.balance ?? 0) - (transactions.type == 'income' ? amt : -amt);
+      await walletProxy.updateBalance(wallet, balance);
+    }
+    await transactionsProxy.delete(transactions);
   }
 
   @override
@@ -105,7 +112,7 @@ class _DetailTransactionState extends State<DetailTransaction> {
                           children: [
                             SizedBox(
                               width: 50.0,
-                              child: CustomIcon(iconPath: groupModel!.icon, size: 40),
+                              child: CustomIcon(iconPath: groupModel?.icon, size: 40),
                             ),
                             Expanded(
                                 child: Container(
@@ -226,7 +233,7 @@ class _DetailTransactionState extends State<DetailTransaction> {
                               child: CircleAvatar(
                                 radius: 15.0,
                                 backgroundColor: Colors.transparent,
-                                child: CustomIcon(iconPath: walletModel!.icon, size: 40),
+                                child: CustomIcon(iconPath: walletModel?.icon, size: 40),
                               ),
                             ),
                             Container(

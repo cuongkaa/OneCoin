@@ -1,28 +1,21 @@
-import 'dart:io';
-
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
-import 'package:onemorecoin/Objects/AlertDiaLogItem.dart';
 
 Widget showSwitch({
   bool value = false,
   ValueChanged<bool>? onChanged,
 }) {
-  TextStyle textStyle = const TextStyle(color: Colors.black);
-  if (Platform.isIOS) {
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
     return CupertinoSwitch(
-      // This bool value toggles the switch.
       value: value,
       activeTrackColor: CupertinoColors.systemGreen,
       onChanged: onChanged,
     );
   }
 
-
   return Switch(
-    // This bool value toggles the switch.
     value: value,
     onChanged: onChanged,
   );
 }
-

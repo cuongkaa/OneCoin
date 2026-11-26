@@ -5,12 +5,17 @@ import 'package:intl/intl.dart';
 
 import '../model/BudgetModel.dart';
 import '../model/GroupModel.dart';
+import '../model/LoanModel.dart';
+import '../model/ReminderModel.dart';
+import '../model/AppNotificationModel.dart';
+import '../model/StorageStage.dart';
 import '../model/TransactionModel.dart';
 import '../model/WalletModel.dart';
 import '../utils/app_localizations.dart';
 import '../utils/backup_helper.dart';
 import '../utils/export_helper.dart';
 import '../widgets/AlertDiaLog.dart';
+import '../widgets/PinDialog.dart';
 import '../Objects/AlertDiaLogItem.dart';
 
 enum ExportFilterType { all, day, month, quarter, year, range }
@@ -399,7 +404,29 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
     );
   }
 
+  /// Ràng buộc an ninh: Yêu cầu xác thực Mã PIN (nếu đã thiết lập) trước khi Xuất/Sao lưu/Khôi phục dữ liệu
+  Future<bool> _verifyPinGate(BuildContext context) async {
+    final storage = context.read<StorageStageProxy>();
+    final hasPin = await storage.hasPin();
+    if (!hasPin) return true;
+    if (!context.mounted) return false;
+
+    final uname = storage.activePinKey;
+    final verifiedPin = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PinDialog(
+          title: S.of(context).get('enter_pin') ?? 'Xác thực mã PIN',
+          onVerify: (pin) => storage.verifyPin(uname, pin),
+          getLockSeconds: () => storage.getPinLockRemainingSeconds(uname),
+        ),
+      ),
+    );
+    return verifiedPin != null;
+  }
+
   Future<void> _exportExcel(BuildContext context) async {
+    if (!await _verifyPinGate(context) || !context.mounted) return;
     final s = S.of(context);
     final transactions = _getFilteredTransactions(context);
 
@@ -442,6 +469,7 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
   }
 
   Future<void> _exportPdf(BuildContext context) async {
+    if (!await _verifyPinGate(context) || !context.mounted) return;
     final s = S.of(context);
     final transactions = _getFilteredTransactions(context);
 
@@ -484,6 +512,7 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
   }
 
   Future<void> _exportCsv(BuildContext context) async {
+    if (!await _verifyPinGate(context) || !context.mounted) return;
     final s = S.of(context);
     final transactions = _getFilteredTransactions(context);
 
@@ -522,6 +551,7 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
   }
 
   Future<void> _backupData(BuildContext context) async {
+    if (!await _verifyPinGate(context) || !context.mounted) return;
     final s = S.of(context);
 
     context.loaderOverlay.show();
@@ -541,6 +571,7 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
   }
 
   Future<void> _restoreData(BuildContext context) async {
+    if (!await _verifyPinGate(context) || !context.mounted) return;
     final s = S.of(context);
 
     showAlertDialog(
@@ -558,11 +589,14 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
             try {
               final success = await BackupHelper.restoreDatabase();
               if (success) {
-                // Reload all providers
+                // Reload toàn bộ các Provider dữ liệu sau khi khôi phục DB
                 await context.read<WalletModelProxy>().init();
                 await context.read<GroupModelProxy>().init();
                 await context.read<TransactionModelProxy>().init();
                 await context.read<BudgetModelProxy>().init();
+                await context.read<LoanProvider>().init();
+                await context.read<ReminderProvider>().reload();
+                await context.read<AppNotificationProvider>().syncNotifications();
 
                 // ignore: use_build_context_synchronously
                 context.loaderOverlay.hide();
@@ -572,7 +606,7 @@ class _ExportBackupScreenState extends State<ExportBackupScreen> {
                 // ignore: use_build_context_synchronously
                 context.loaderOverlay.hide();
                 // ignore: use_build_context_synchronously
-                _showSnackBar(context, s.get('restore_fail') ?? 'Khôi phục thất bại', isError: true);
+                _showSnackBar(context, s.get('restore_fail') ?? 'File sao lưu không hợp lệ hoặc khôi phục thất bại', isError: true);
               }
             } catch (e) {
               // ignore: use_build_context_synchronously

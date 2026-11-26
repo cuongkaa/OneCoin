@@ -16,6 +16,7 @@ import '../pages/Transaction/addtransaction/ListWalletPage.dart';
 Future<T?> ShowTransactionPage<T>(
     BuildContext context,{
       TransactionModel? transactionModel,
+      Map<String, dynamic>? initialScanData,
     }) async {
 
   return showCupertinoModalBottomSheet(
@@ -29,6 +30,7 @@ Future<T?> ShowTransactionPage<T>(
               return MaterialWithModalsPageRoute(
                 builder: (context) => AddTransaction(
                   transactionModel: transactionModel,
+                  initialScanData: initialScanData,
                 ),
                 settings: settings,
               );

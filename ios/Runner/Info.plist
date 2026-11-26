@@ -70,6 +70,10 @@
 			<string>fbapi</string>
 			<string>fb-messenger-share-api</string>
 		</array>
+		<key>NSCameraUsageDescription</key>
+		<string>Ứng dụng cần quyền truy cập máy ảnh để tự động quét mã QR và hóa đơn chi tiêu.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Ứng dụng cần quyền truy cập thư viện ảnh để đọc mã QR và hóa đơn chi tiêu.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
 	</dict>

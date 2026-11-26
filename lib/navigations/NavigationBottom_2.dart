@@ -1,33 +1,14 @@
 import 'dart:async';
-import 'dart:convert';
-
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'package:onemorecoin/model/AppNotificationModel.dart';
-import 'package:modal_bottom_sheet/modal_bottom_sheet.dart';
-import 'package:onemorecoin/Objects/NavigationTransitionType.dart';
-import 'package:onemorecoin/pages/Report/ReportForPeriod.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/AddNewGroupPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/AddNotePage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/AddNotificationPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/AddTransaction.dart';
 import 'package:onemorecoin/pages/BudgetScreen.dart';
-import 'package:onemorecoin/pages/Transaction.dart';
 import 'package:onemorecoin/pages/HomeScreen.dart';
-import 'package:flutter/foundation.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/AddWalletPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/DateSelectPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/ListCurrencyPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/ListGroupPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/ListIconPage.dart';
-import 'package:onemorecoin/pages/Transaction/addtransaction/ListWalletPage.dart';
-import 'package:onemorecoin/widgets/ShowTransaction.dart';
-
-import '../pages/ProfileScreen.dart';
-import '../widgets/ShowDialogFullScreen.dart';
-import 'TabNavigator.dart';
+import 'package:onemorecoin/pages/Transaction.dart';
+import 'package:onemorecoin/pages/Transaction/addtransaction/ReceiptScanScreen.dart';
 import 'package:onemorecoin/utils/app_localizations.dart';
+import 'package:onemorecoin/widgets/ShowTransaction.dart';
+import 'package:provider/provider.dart';
+import 'TabNavigator.dart';
 
 class NavigationBottom2 extends StatefulWidget {
   const NavigationBottom2({super.key});
@@ -36,86 +17,121 @@ class NavigationBottom2 extends StatefulWidget {
   State<NavigationBottom2> createState() => _NavigationExampleState();
 }
 
-class _NavigationExampleState extends State<NavigationBottom2> with WidgetsBindingObserver {
+class _NavigationExampleState extends State<NavigationBottom2>
+    with WidgetsBindingObserver {
   Timer? _timer;
   int currentPageIndex = 0;
   late PageController _pageController;
-  Key _refreshKey = UniqueKey();
-
-  // Colors are now derived from theme in build()
+  final Key _refreshKey = UniqueKey();
 
   late final List<Widget> _pages = <Widget>[
     HomeScreen(
-      title: "HomeScreen",
+      title: 'HomeScreen',
       jumpToPage: _jumpToPage,
     ),
     const Transaction(),
-    const BudgetScreen(title: "BudgetScreen"),
+    const BudgetScreen(title: 'BudgetScreen'),
     TabNavigator(
       tabItem: 'ProfileScreen',
       navigatorKey: GlobalKey<NavigatorState>(),
     ),
-// ProfileScreen()
   ];
 
   List<BottomObject> _getNavigationBarItems(BuildContext context) {
     final s = S.of(context);
     return [
       BottomObject(
-          Icons.home, Icons.home_outlined, s.get('overview') ?? "Tổng quan"),
-      BottomObject(Icons.wallet, Icons.wallet_outlined,
-          s.get('transactions') ?? "Giao dịch"),
+        Icons.dashboard_rounded,
+        Icons.dashboard_outlined,
+        s.get('overview') ?? 'Tổng quan',
+      ),
       BottomObject(
-          Icons.class_, Icons.class_outlined, s.get('budget') ?? "Ngân sách"),
+        Icons.receipt_long_rounded,
+        Icons.receipt_long_outlined,
+        s.get('transactions') ?? 'Giao dịch',
+      ),
       BottomObject(
-          Icons.person, Icons.person_outlined, s.get('account') ?? "Tài khoản"),
+        Icons.pie_chart_rounded,
+        Icons.pie_chart_outline_rounded,
+        s.get('budget') ?? 'Ngân sách',
+      ),
+      BottomObject(
+        Icons.person_rounded,
+        Icons.person_outline_rounded,
+        s.get('account') ?? 'Tài khoản',
+      ),
     ];
   }
 
-  Widget bottomBarButton(Size size, BottomObject bottomObject,
-          Function() onSelect, bool isSelect) =>
-      Expanded(
-        child: SizedBox(
-          height: size.height,
-          child: InkWell(
-            onTap: onSelect,
-            // borderRadius: BorderRadius.circular(50.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: <Widget>[
-                Icon(isSelect ? bottomObject.selectedIcon : bottomObject.icon,
-                    color:
-                        isSelect ? Theme.of(context).colorScheme.primary : null,
-                    size: MediaQuery.of(context).size.width * 0.08), // <-- Icon
-                const SizedBox(height: 2),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text(
-                    bottomObject.label,
-                    maxLines: 1,
-                    style: TextStyle(
-                        fontSize: MediaQuery.of(context).size.width * 0.035,
-                        color: isSelect
-                            ? Theme.of(context).colorScheme.primary
-                            : null),
-                  ),
-                )
-              ],
-            ),
+  Widget _buildNavTab(
+    BuildContext context,
+    BottomObject item,
+    VoidCallback onTap,
+    bool isSelected,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final activeColor = const Color(0xFF2563EB);
+    final inactiveColor = isDark ? Colors.grey.shade400 : Colors.grey.shade600;
+
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? activeColor.withValues(alpha: 0.12)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  isSelected ? item.selectedIcon : item.icon,
+                  color: isSelected ? activeColor : inactiveColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                item.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  height: 1.1,
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected ? activeColor : inactiveColor,
+                ),
+              ),
+            ],
           ),
         ),
-      );
+      ),
+    );
+  }
 
-  List<Widget> buildBottomBarItems(BuildContext context, Size size) {
+  List<Widget> _buildBottomBarItems(BuildContext context) {
     final items = _getNavigationBarItems(context);
-    List<Widget> list = [];
+    final list = <Widget>[];
     for (int i = 0; i < items.length; i++) {
-      final item = items[i];
       if (i == 2) {
-        list.add(const Expanded(child: SizedBox.shrink()));
+        list.add(const SizedBox(width: 64));
       }
-      list.add(bottomBarButton(
-          size, item, () => {_jumpToPage(i)}, currentPageIndex == i));
+      list.add(
+        _buildNavTab(
+          context,
+          items[i],
+          () => _jumpToPage(i),
+          currentPageIndex == i,
+        ),
+      );
     }
     return list;
   }
@@ -127,24 +143,14 @@ class _NavigationExampleState extends State<NavigationBottom2> with WidgetsBindi
     });
   }
 
-  Widget bottomAppBar(BuildContext context, size) => BottomAppBar(
-      color: Theme.of(context).bottomAppBarTheme.color,
-      shape: const CircularNotchedRectangle(), //shape of notch
-      notchMargin: 5, //notche margin between floating button and bottom appbar
-      child: Row(
-        mainAxisSize: MainAxisSize.max,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: buildBottomBarItems(context, size),
-      ));
-
   @override
   void initState() {
     super.initState();
     currentPageIndex = 0;
     _pageController = PageController(initialPage: currentPageIndex);
-    
+
     WidgetsBinding.instance.addObserver(this);
-    _timer = Timer.periodic(const Duration(minutes: 1), (timer) {
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) {
         context.read<AppNotificationProvider>().syncNotifications();
       }
@@ -153,10 +159,8 @@ class _NavigationExampleState extends State<NavigationBottom2> with WidgetsBindi
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      if (mounted) {
-        context.read<AppNotificationProvider>().syncNotifications();
-      }
+    if (state == AppLifecycleState.resumed && mounted) {
+      context.read<AppNotificationProvider>().syncNotifications();
     }
   }
 
@@ -168,41 +172,78 @@ class _NavigationExampleState extends State<NavigationBottom2> with WidgetsBindi
     super.dispose();
   }
 
-  void _handleLocaleChanged() => setState(() {
-        _refreshKey = UniqueKey();
-      });
-
   @override
   Widget build(BuildContext context) {
-    var size = Size(MediaQuery.of(context).size.width * 0.15,
-        MediaQuery.of(context).size.width * 0.15);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Scaffold(
       key: _refreshKey,
       resizeToAvoidBottomInset: false,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      floatingActionButton: SizedBox(
-        width: size.width,
-        height: size.height,
-        child: FloatingActionButton(
-          backgroundColor: Colors.blue,
-          shape: const CircleBorder(),
-          elevation: 0.0,
-          child: const Icon(
-            Icons.add,
-            color: Colors.white,
-          ),
-          onPressed: () {
-            ShowTransactionPage(context);
+      floatingActionButton: Tooltip(
+        message: 'Thêm giao dịch • Nhấn giữ để Quét QR / Hóa đơn',
+        child: GestureDetector(
+          onLongPress: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const ReceiptScanScreen(standaloneMode: true),
+              ),
+            );
           },
+          child: Container(
+            width: 56,
+            height: 56,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                colors: [Color(0xFF2563EB), Color(0xFF4F46E5)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.38),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => ShowTransactionPage(context),
+                child: const Icon(
+                  Icons.add_rounded,
+                  color: Colors.white,
+                  size: 30,
+                ),
+              ),
+            ),
+          ),
         ),
       ),
-      floatingActionButtonLocation: FixedCenterDockedFabLocation(),
+      floatingActionButtonLocation: const FixedCenterDockedFabLocation(),
       body: PageView(
         controller: _pageController,
         physics: const NeverScrollableScrollPhysics(),
         children: _pages,
       ),
-      bottomNavigationBar: bottomAppBar(context, size),
+      bottomNavigationBar: BottomAppBar(
+        height: 68,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 14,
+        shadowColor: Colors.black26,
+        shape: const CircularNotchedRectangle(),
+        notchMargin: 6,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: _buildBottomBarItems(context),
+        ),
+      ),
     );
   }
 }
@@ -212,16 +253,19 @@ class FixedCenterDockedFabLocation extends FloatingActionButtonLocation {
 
   @override
   Offset getOffset(ScaffoldPrelayoutGeometry scaffoldGeometry) {
-    final double fabX = (scaffoldGeometry.scaffoldSize.width - scaffoldGeometry.floatingActionButtonSize.width) / 2.0;
-    final double fabY = scaffoldGeometry.contentBottom - (scaffoldGeometry.floatingActionButtonSize.height / 2.0);
+    final double fabX = (scaffoldGeometry.scaffoldSize.width -
+            scaffoldGeometry.floatingActionButtonSize.width) /
+        2.0;
+    final double fabY = scaffoldGeometry.contentBottom -
+        (scaffoldGeometry.floatingActionButtonSize.height / 2.0);
     return Offset(fabX, fabY);
   }
 }
 
 class BottomObject {
-  final IconData icon;
   final IconData selectedIcon;
+  final IconData icon;
   final String label;
 
-  BottomObject(this.icon, this.selectedIcon, this.label);
+  BottomObject(this.selectedIcon, this.icon, this.label);
 }

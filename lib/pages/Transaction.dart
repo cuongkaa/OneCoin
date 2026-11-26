@@ -42,37 +42,32 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
 
   List<TabTransaction> listTab = [];
   final List<Tab> _tabs = <Tab>[];
-  late TabController _tabController;
+  TabController? _tabController;
   int totalTab = 20;
   int _tabIndex = 0;
   WalletModel _wallet = WalletModel(0, name: null, icon: null, currency: "VND");
   String _transactionViewModel = "date";
   bool _isBackToday = false;
 
-  void _generateListTab(ShowType showType){
+  void _syncTabController(int length, {bool resetToLatest = false}) {
+    final safeLength = length > 0 ? length : 1;
+    final desiredIndex = safeLength > 2 ? safeLength - 2 : 0;
+    if (_tabController == null || _tabController!.length != safeLength) {
+      _tabController?.dispose();
+      _tabIndex = desiredIndex;
+      _tabController = TabController(vsync: this, length: safeLength, initialIndex: _tabIndex);
+    } else if (resetToLatest) {
+      _tabIndex = desiredIndex;
+      _tabController!.index = _tabIndex;
+    }
+  }
 
+  void _generateListTab(ShowType showType){
     setState(() {
       _isBackToday = false;
-      // listTab = Utils.getListTabShowTypeTransaction(showType, totalTab);
       listTab = context.read<TransactionModelProxy>().generateListTabTransactionInTransactionPage(false, showType, _wallet);
-      _tabIndex = listTab.length > 2 ? listTab.length  - 2 : 0;
-      _tabController = TabController(vsync: this, length: listTab.length, initialIndex: _tabIndex);
+      _syncTabController(listTab.length, resetToLatest: true);
     });
-    // _tabController.addListener(() {
-    //   if(listTab.length - _tabController.index > 5 && !_isBackToday){
-    //     // setState(() {
-    //     //   _isBackToday = true;
-    //     // });
-    //     print("Listener triggered...");
-    //     _isBackToday = true;
-    //   }else if(_isBackToday){
-    //     // setState(() {
-    //     //   _isBackToday = false;
-    //     // });
-    //     print("Listener triggered222...");
-    //   }
-    // });
-
   }
 
   List<AlertDiaLogItem> _getListAlertDialogItem(BuildContext context) {
@@ -253,10 +248,16 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
       });
     }
 
-    return ListView(
-      children: [
-        if(transactions.isNotEmpty)
-          Container(
+    final sections = _transactionViewModel == "group"
+        ? _renderTransactionAccordingGroup(transactions)
+        : _renderTransactionAccordingDate(transactions);
+
+    // Sử dụng ListView.builder (Lazy Rendering) để chỉ vẽ các nhóm ngày đang hiển thị trên khung nhìn
+    return ListView.builder(
+      itemCount: sections.length + 2,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Container(
             margin: const EdgeInsets.only(top: 1.0),
             padding: const EdgeInsets.symmetric(vertical: 10.0),
             constraints: const BoxConstraints(
@@ -277,8 +278,8 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                       ),
                       Flexible(
                         child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(Utils.currencyFormat(amountBefore), maxLines: 1)
+                          fit: BoxFit.scaleDown,
+                          child: Text(Utils.currencyFormat(amountBefore), maxLines: 1),
                         ),
                       )
                     ],
@@ -299,9 +300,9 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                                "+${Utils.currencyFormat(sumIncome)}",
-                                maxLines: 1,
-                                style: const TextStyle(color: Colors.green)
+                              "+${Utils.currencyFormat(sumIncome)}",
+                              maxLines: 1,
+                              style: const TextStyle(color: Colors.green),
                             ),
                           ),
                         )
@@ -324,9 +325,9 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                           child: FittedBox(
                             fit: BoxFit.scaleDown,
                             child: Text(
-                                "-${Utils.currencyFormat(sumExpense)}",
-                                maxLines: 1,
-                                style: const TextStyle(color: Colors.red)
+                              "-${Utils.currencyFormat(sumExpense)}",
+                              maxLines: 1,
+                              style: const TextStyle(color: Colors.red),
                             ),
                           ),
                         )
@@ -342,17 +343,21 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                     children: [
                       SizedBox(
                         width: 150,
-                        child: Text(S.of(context).get('ending_balance') ?? "Số dư cuối kỳ", style: const TextStyle(fontWeight: FontWeight.bold)),
+                        child: Text(
+                          S.of(context).get('ending_balance') ?? "Số dư cuối kỳ",
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
                       ),
                       Flexible(
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
-                          child: Text("${(amountBefore + amountInPeriod > 0 ? "+" : "")}${Utils.currencyFormat(amountBefore + amountInPeriod)}",
-                              maxLines: 1,
-                              style: const TextStyle(
-                                fontSize: 16.0,
-                                fontWeight: FontWeight.bold,
-                              )
+                          child: Text(
+                            "${(amountBefore + amountInPeriod > 0 ? "+" : "")}${Utils.currencyFormat(amountBefore + amountInPeriod)}",
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 16.0,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       )
@@ -361,29 +366,28 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                 ),
                 const SizedBox(height: 5),
                 Center(
-                    child: GestureDetector(
-                      onTap: () {
-                        _showReportForPeriod(context);
-                      },
-                      child: Text(S.of(context).get('view_report_for_period') ?? "Xem báo cáo cho giai đoạn này",
-                        style: const TextStyle(
-                          color: Colors.green,
-                          fontSize: 16.0,
-                        ),
+                  child: GestureDetector(
+                    onTap: () {
+                      _showReportForPeriod(context);
+                    },
+                    child: Text(
+                      S.of(context).get('view_report_for_period') ?? "Xem báo cáo cho giai đoạn này",
+                      style: const TextStyle(
+                        color: Colors.green,
+                        fontSize: 16.0,
                       ),
-                    )
+                    ),
+                  ),
                 )
               ],
             ),
-          ),
-        if(transactions.isNotEmpty)
-          ...(
-              _transactionViewModel == "group" ?
-              _renderTransactionAccordingGroup(transactions) :
-              _renderTransactionAccordingDate(transactions)
-          ),
-        const SizedBox(height: 100.0)
-      ],
+          );
+        }
+        if (index == sections.length + 1) {
+          return const SizedBox(height: 100.0);
+        }
+        return sections[index - 1];
+      },
     );
   }
 
@@ -392,7 +396,9 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
     List<Widget> result = [];
     Map<String, List<TransactionModel>> map = {};
     for (final item in transactions) {
-      DateTime day = MyDateUtils.dateOnly(DateTime.parse(item.date ?? ""));
+      final dt = item.parsedDate;
+      if (dt == null) continue;
+      DateTime day = MyDateUtils.dateOnly(dt);
       if (map.containsKey(day.toString())) {
         map[day.toString()]!.add(item);
       } else {
@@ -472,24 +478,20 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
   }
 
   void _showReportForPeriod(BuildContext context) async {
-    ShowReportForPeriod(context, tabIndex: _tabController.index);
+    ShowReportForPeriod(context, tabIndex: _tabController?.index ?? 0);
   }
 
   @override
   void initState() {
     super.initState();
-    print("init  Transaction ");
-    // _wallet = context.read<TransactionModelProxy>().walletModel;
     _generateListTab(ShowType.date);
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.dispose();
     super.dispose();
   }
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -499,9 +501,14 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
     _wallet = context.read<TransactionModelProxy>().walletModel;
     if (_wallet.id == 0) _wallet.name = s.get('all_wallets') ?? "Tất cả các ví";
     listTab = context.read<TransactionModelProxy>().listTab;
+    _syncTabController(listTab.length);
     var transactions = context.watch<TransactionModelProxy>().getTransactionByWalletId(_wallet.id);
     if(_wallet.id == 0){
-      double totalAmount = context.read<WalletModelProxy>().getAll().fold(0, (previousValue, element) => previousValue + element.balance!);
+      double totalAmount = context
+          .read<WalletModelProxy>()
+          .getAll()
+          .where((w) => w.isReport)
+          .fold(0.0, (previousValue, element) => previousValue + (element.balance ?? 0.0));
       _wallet.balance = totalAmount;
     }
 
@@ -548,7 +555,7 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                           Flexible(
                               child: FittedBox(
                                 fit: BoxFit.scaleDown,
-                                child: Text(Utils.currencyFormat(_wallet.balance!),
+                                child: Text(Utils.currencyFormat(_wallet.balance ?? 0),
                                   style: TextStyle(
                                       fontSize: 24.0,
                                       fontWeight: FontWeight.bold,
@@ -599,13 +606,10 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                 ),
               ),
             ),
-            body: DefaultTabController(
-              length: listTab.length,
-              child: Stack(
+            body: Stack(
                 children: [
                   Column(
                     children: [
-                      // CategoryTabs(listTab: _getListTab(showType)),
                       Container(
                         height: 50,
                         color: Theme.of(context).cardColor,
@@ -623,11 +627,6 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                             controller: _tabController,
                             children: [
                               ..._generateListTabTransaction(context, [], listTab),
-                              // for (final item in listTab)
-                              //   PageStorage(
-                              //     bucket: PageStorageBucket(),
-                              //     child: _generateListTransaction(transactions, item),
-                              //   )
                             ],
                           ),
                         ),
@@ -645,17 +644,16 @@ class _Transaction extends State<Transaction> with TickerProviderStateMixin, Aut
                         onTap: () {
                           setState(() {
                             _tabIndex = listTab.length > 2 ? listTab.length  - 2 : 0;
-                            _tabController.animateTo(_tabIndex);
+                            _tabController?.animateTo(_tabIndex);
                             _isBackToday = false;
                           });
                         },
-                        child: Icon(Icons.keyboard_double_arrow_right, color: Colors.white),
+                        child: const Icon(Icons.keyboard_double_arrow_right, color: Colors.white),
                       ),
                     ),
                   )
                 ],
               ),
-            ),
           ),
         ),
       )

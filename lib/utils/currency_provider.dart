@@ -4,6 +4,11 @@ import 'package:intl/intl.dart';
 
 class CurrencyProvider extends ChangeNotifier {
   static String currentCurrency = 'VND';
+  static final NumberFormat _usdFmt =
+      NumberFormat.currency(customPattern: '#,##0.00', symbol: "", decimalDigits: 2);
+  static final NumberFormat _vndFmt =
+      NumberFormat.currency(customPattern: '###,###', symbol: "", decimalDigits: 0);
+
   String _currency = 'VND';
 
   String get currency => _currency;
@@ -38,9 +43,9 @@ class CurrencyProvider extends ChangeNotifier {
 
   String format(double amount) {
     if (_currency == 'USD') {
-      return "\$${NumberFormat.currency(customPattern: '#,##0.00', symbol: "", decimalDigits: 2).format(amount / 26294.0)}";
+      return "\$${_usdFmt.format(amount / 26294.0)}";
     }
-    return "${NumberFormat.currency(customPattern: '###,###', symbol: "", decimalDigits: 0).format(amount)} đ";
+    return "${_vndFmt.format(amount)} đ";
   }
 
   double get rate {

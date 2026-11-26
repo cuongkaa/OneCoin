@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:csv/csv.dart';
 import 'package:excel/excel.dart';
@@ -11,6 +12,16 @@ import 'package:share_plus/share_plus.dart';
 import '../model/TransactionModel.dart';
 
 class ExportHelper {
+  /// Chống lỗ hổng CSV/Excel Formula Injection (CWE-1236) khi văn bản bắt đầu bằng =, +, -, @
+  static String _sanitizeCell(String? value) {
+    if (value == null || value.isEmpty) return '';
+    final first = value[0];
+    if (first == '=' || first == '+' || first == '-' || first == '@') {
+      return "'$value";
+    }
+    return value;
+  }
+
   /// Xuất danh sách giao dịch ra file Excel (.xlsx)
   static Future<File?> exportToExcel(
     List<TransactionModel> transactions, {
@@ -71,17 +82,17 @@ class ExportHelper {
         final row = i + 1;
 
         sheet.cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: row)).value = IntCellValue(i + 1);
-        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row)).value = TextCellValue(t.title ?? '');
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: row)).value = TextCellValue(_sanitizeCell(t.title));
         sheet.cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: row)).value = DoubleCellValue(t.amount ?? 0);
         sheet.cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: row)).value = TextCellValue(
           t.type == 'income' ? incomeLabel : expenseLabel,
         );
-        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: row)).value = TextCellValue(t.group?.name ?? '');
-        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: row)).value = TextCellValue(t.wallet?.name ?? '');
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: row)).value = TextCellValue(_sanitizeCell(t.group?.name));
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: row)).value = TextCellValue(_sanitizeCell(t.wallet?.name));
         sheet.cell(CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: row)).value = TextCellValue(
-          t.date != null ? DateFormat('dd/MM/yyyy').format(DateTime.parse(t.date!)) : '',
+          t.date != null ? DateFormat('dd/MM/yyyy').format(DateTime.tryParse(t.date!) ?? DateTime.now()) : '',
         );
-        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: row)).value = TextCellValue(t.note ?? '');
+        sheet.cell(CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: row)).value = TextCellValue(_sanitizeCell(t.note));
 
         if (t.type == 'income') {
           totalIncome += t.amount ?? 0;
@@ -146,8 +157,16 @@ class ExportHelper {
     String totalExpenseLabel = 'Tổng chi tiêu',
   }) async {
     try {
-      final fontRegular = await PdfGoogleFonts.robotoRegular();
-      final fontBold = await PdfGoogleFonts.robotoBold();
+      pw.Font fontRegular;
+      pw.Font fontBold;
+      try {
+        fontRegular = await PdfGoogleFonts.robotoRegular().timeout(const Duration(seconds: 5));
+        fontBold = await PdfGoogleFonts.robotoBold().timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // Fallback font nội bộ khi thiết bị đang Offline
+        fontRegular = pw.Font.helvetica();
+        fontBold = pw.Font.helveticaBold();
+      }
 
       final pdf = pw.Document(
         theme: pw.ThemeData.withFont(
@@ -280,24 +299,24 @@ class ExportHelper {
         final t = transactions[i];
         rows.add([
           i + 1,
-          t.title ?? '',
+          _sanitizeCell(t.title),
           t.amount ?? 0,
           t.type == 'income' ? incomeLabel : expenseLabel,
-          t.group?.name ?? '',
-          t.wallet?.name ?? '',
-          t.date != null ? DateFormat('dd/MM/yyyy').format(DateTime.parse(t.date!)) : '',
-          t.note ?? '',
+          _sanitizeCell(t.group?.name),
+          _sanitizeCell(t.wallet?.name),
+          t.date != null ? DateFormat('dd/MM/yyyy').format(DateTime.tryParse(t.date!) ?? DateTime.now()) : '',
+          _sanitizeCell(t.note),
         ]);
       }
 
       final csvData = const ListToCsvConverter().convert(rows);
 
-      // Add UTF-8 BOM for Excel compatibility with Vietnamese
+      // Ghi chuẩn UTF-8 BOM + utf8.encode để không làm hỏng dấu tiếng Việt
       final dir = await getTemporaryDirectory();
       final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
       final filePath = '${dir.path}/giao_dich_$timestamp.csv';
       final file = File(filePath);
-      await file.writeAsBytes([0xEF, 0xBB, 0xBF, ...csvData.codeUnits]);
+      await file.writeAsBytes([0xEF, 0xBB, 0xBF, ...utf8.encode(csvData)]);
       return file;
     } catch (e) {
       return null;

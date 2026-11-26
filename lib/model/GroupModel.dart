@@ -136,6 +136,7 @@ class GroupModelProxy extends ChangeNotifier {
       GroupModel(14, 1, name: "Lãi", type: "income", icon: Icons.trending_up.codePoint.toString(), color: "#8BC34A"),
       GroupModel(15, 1, name: "Bán đồ", type: "income", icon: Icons.storefront.codePoint.toString(), color: "#FF9800"),
       GroupModel(16, 1, name: "Khác", type: "income", icon: Icons.category.codePoint.toString(), color: "#9E9E9E"),
+      GroupModel(17, 1, name: "Tiền điện", type: "expense", icon: Icons.bolt.codePoint.toString(), color: "#FFC107"),
     ];
     for (var group in initialGroups) {
       await db.insert('groups', group.toMap());

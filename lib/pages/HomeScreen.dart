@@ -33,6 +33,7 @@ import 'package:onemorecoin/widgets/QuickAddWidget.dart';
 import 'package:onemorecoin/widgets/MiniDashboardWidget.dart';
 import 'package:onemorecoin/widgets/QuickStatsWidget.dart';
 import 'package:onemorecoin/widgets/FinancialForecastCard.dart';
+import 'package:onemorecoin/pages/Transaction/addtransaction/ReceiptScanScreen.dart';
 
 class HomeScreen extends StatefulWidget {
 
@@ -80,7 +81,11 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
 
   void _calculate(){
     transactionNewest = context.watch<TransactionModelProxy>().getNewest(3);
-    double totalAmount = context.watch<WalletModelProxy>().getAll().fold(0, (previousValue, element) => previousValue + element.balance!);
+    double totalAmount = context
+        .watch<WalletModelProxy>()
+        .getAll()
+        .where((w) => w.isReport)
+        .fold(0.0, (previousValue, element) => previousValue + (element.balance ?? 0.0));
     
     final selectedWalletProxy = context.watch<TransactionModelProxy>().walletModel;
     if (selectedWalletProxy.id == 0) {
@@ -296,7 +301,7 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                            )
                          ],
                        ),
-                       Text(Utils.currencyFormat(_wallet.balance!),
+                       Text(Utils.currencyFormat(_wallet.balance ?? 0),
                          style: TextStyle(
                            fontSize: 18.0,
                            fontWeight: FontWeight.bold,
@@ -310,6 +315,118 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
              ),
            ),
            const SizedBox(height: 12.0),
+           // Hero Banner: Quét QR & Hóa đơn thông minh (OCR + VietQR + 3-Layer ML)
+           Padding(
+             padding: const EdgeInsets.symmetric(horizontal: 10.0),
+             child: GestureDetector(
+               onTap: () {
+                 Navigator.of(context).push(
+                   MaterialPageRoute(
+                     builder: (_) => const ReceiptScanScreen(standaloneMode: true),
+                   ),
+                 );
+               },
+               child: Container(
+                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                 decoration: BoxDecoration(
+                   gradient: const LinearGradient(
+                     colors: [Color(0xFF0F766E), Color(0xFF0D9488), Color(0xFF10B981)],
+                     begin: Alignment.topLeft,
+                     end: Alignment.bottomRight,
+                   ),
+                   borderRadius: BorderRadius.circular(16),
+                   boxShadow: [
+                     BoxShadow(
+                       color: const Color(0xFF0D9488).withValues(alpha: 0.32),
+                       blurRadius: 12,
+                       offset: const Offset(0, 5),
+                     ),
+                   ],
+                 ),
+                 child: Row(
+                   children: [
+                     Container(
+                       padding: const EdgeInsets.all(11),
+                       decoration: BoxDecoration(
+                         color: Colors.white.withValues(alpha: 0.2),
+                         borderRadius: BorderRadius.circular(13),
+                       ),
+                       child: const Icon(
+                         Icons.qr_code_scanner_rounded,
+                         color: Colors.white,
+                         size: 28,
+                       ),
+                     ),
+                     const SizedBox(width: 12),
+                     Expanded(
+                       child: Column(
+                         crossAxisAlignment: CrossAxisAlignment.start,
+                         children: [
+                           Row(
+                             children: [
+                               const Flexible(
+                                 child: Text(
+                                   'Quét QR & Hóa Đơn Thông Minh',
+                                   maxLines: 1,
+                                   overflow: TextOverflow.ellipsis,
+                                   style: TextStyle(
+                                     color: Colors.white,
+                                     fontWeight: FontWeight.bold,
+                                     fontSize: 15,
+                                   ),
+                                 ),
+                               ),
+                               const SizedBox(width: 6),
+                               Container(
+                                 padding: const EdgeInsets.symmetric(
+                                   horizontal: 6,
+                                   vertical: 2,
+                                 ),
+                                 decoration: BoxDecoration(
+                                   color: Colors.white.withValues(alpha: 0.24),
+                                   borderRadius: BorderRadius.circular(6),
+                                 ),
+                                 child: const Text(
+                                   'OCR + ML',
+                                   style: TextStyle(
+                                     color: Colors.white,
+                                     fontSize: 10,
+                                     fontWeight: FontWeight.w800,
+                                   ),
+                                 ),
+                               ),
+                             ],
+                           ),
+                           const SizedBox(height: 3),
+                           Text(
+                             'Giải mã VietQR, Hóa đơn điện tử & Tự động phân loại chi tiêu bằng AI',
+                             style: TextStyle(
+                               color: Colors.white.withValues(alpha: 0.9),
+                               fontSize: 11.5,
+                             ),
+                           ),
+                         ],
+                       ),
+                     ),
+                     const SizedBox(width: 6),
+                     Container(
+                       padding: const EdgeInsets.all(6),
+                       decoration: BoxDecoration(
+                         color: Colors.white.withValues(alpha: 0.18),
+                         shape: BoxShape.circle,
+                       ),
+                       child: const Icon(
+                         Icons.arrow_forward_rounded,
+                         color: Colors.white,
+                         size: 18,
+                       ),
+                     ),
+                   ],
+                 ),
+               ),
+             ),
+           ),
+           const SizedBox(height: 10.0),
            // Feature cards: Chatbot & Loan Management
            Padding(
              padding: const EdgeInsets.symmetric(horizontal: 10.0),
@@ -463,10 +580,12 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
              ),
              ),
            ),
-            const QuickAddWidget(),
+             const QuickAddWidget(),
              const MiniDashboardWidget(),
              const QuickStatsWidget(),
-              const FinancialForecastCard(),
+             FinancialForecastCard(
+               onSetupBudget: () => widget.jumpToPage?.call(2),
+             ),
            Container(
              margin: const EdgeInsets.symmetric( horizontal: 10.0),
              child: Container(
@@ -550,12 +669,12 @@ class _HomeScreenState extends State<HomeScreen> with AutomaticKeepAliveClientMi
                         if(transactionNewest.isNotEmpty)
                           for(var item in transactionNewest)
                             ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor: Colors.transparent,
-                                radius: 20.0,
-                                child: CustomIcon(iconPath: item.group!.icon, size: 40),
-                              ),
-                              title: Text(Utils.translateGroupName(context, item.group!.name),
+                                leading: CircleAvatar(
+                                  backgroundColor: Colors.transparent,
+                                  radius: 20.0,
+                                  child: CustomIcon(iconPath: item.group?.icon, size: 40),
+                                ),
+                                title: Text(Utils.translateGroupName(context, item.group?.name),
                                 style: TextStyle(
                                   fontSize: 13.0,
                                   fontWeight: FontWeight.bold,

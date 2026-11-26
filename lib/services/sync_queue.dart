@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:onemorecoin/services/api_service.dart';
@@ -18,6 +19,7 @@ class SyncQueue {
   static const int _maxJitterMs = 500;
 
   bool _isProcessing = false;
+  Timer? _debounceTimer;
   final _uuid = const Uuid();
 
   /// Thêm action vào queue với logic merge thông minh
@@ -115,19 +117,40 @@ class SyncQueue {
       'lastAttempt': null,
     });
 
-    // Tự động trigger process queue
-    processQueue();
+    // Debounce 400ms để gom nhiều thao tác liên tiếp mà không chặn luồng giao diện
+    _scheduleProcessQueue();
   }
 
-  /// Xử lý toàn bộ queue (FIFO, skip dead items)
+  void _scheduleProcessQueue() {
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () {
+      processQueue();
+    });
+  }
+
+  /// Xử lý toàn bộ queue (FIFO, skip ngay lập tức nếu user đang dùng chế độ Offline/Guest chưa có JWT)
   Future<void> processQueue() async {
     if (_isProcessing) return;
+    // Nếu chạy local chưa đăng nhập tài khoản đám mây → thoát ngay trong 0ms, không gửi request thừa!
+    if (!await ApiService.instance.hasToken()) return;
+
     _isProcessing = true;
 
     try {
+      final db = await DatabaseHelper.instance.database;
+      final hasPending = await db.query(
+        'pending_actions',
+        columns: ['id'],
+        where: 'status = ?',
+        whereArgs: ['pending'],
+        limit: 1,
+      );
+      if (hasPending.isEmpty) {
+        return;
+      }
+
       final isOnline = await ApiService.instance.isServerReachable();
       if (!isOnline) {
-        _isProcessing = false;
         return;
       }
 
@@ -237,7 +260,14 @@ class SyncQueue {
           return false;
       }
 
+      if (result['networkError'] == true) {
+        return false; // Mất mạng hoặc server chưa chạy → giữ lại trong queue để đồng bộ sau
+      }
+
       final statusCode = result['statusCode'] as int? ?? 0;
+      if (statusCode == 0) {
+        return false;
+      }
 
       // Xử lý theo HTTP status
       if (statusCode >= 200 && statusCode < 300) {
@@ -279,6 +309,8 @@ class SyncQueue {
         return ApiConfig.budgets;
       case 'loans':
         return ApiConfig.loans;
+      case 'loan_payments':
+        return ApiConfig.loanPayments;
       case 'reminders':
         return ApiConfig.reminders;
       default:

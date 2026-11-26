@@ -70,14 +70,15 @@ class BackgroundSync with WidgetsBindingObserver {
     await _processQueueIfOnline();
   }
 
-  /// Process queue nếu có mạng
+  /// Process queue nếu đã đăng nhập tài khoản online và có item chờ đồng bộ
   Future<void> _processQueueIfOnline() async {
     try {
+      if (!await ApiService.instance.hasToken()) return;
+      final pending = await SyncQueue.instance.getPendingCount();
+      if (pending == 0) return;
+
       final isOnline = await ApiService.instance.isServerReachable();
-      if (!isOnline) {
-        print('[BackgroundSync] ❌ Offline, skipping sync');
-        return;
-      }
+      if (!isOnline) return;
 
       await SyncQueue.instance.processQueue();
       _lastSyncTime = DateTime.now();

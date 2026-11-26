@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -9,24 +10,35 @@ class NotificationHelper {
 
   NotificationHelper._init();
 
+  /// Đảm bảo ID thông báo luôn nằm trong miền số nguyên 32-bit dương hợp lệ của Android/iOS
+  static int safeId(int rawId) => rawId & 0x7FFFFFFF;
+
   Future<void> init() async {
+    if (kIsWeb) return;
     tz.initializeTimeZones();
-    // Múi giờ Việt Nam
     tz.setLocalLocation(tz.getLocation('Asia/Ho_Chi_Minh'));
 
     const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
+    const DarwinInitializationSettings initializationSettingsDarwin =
+        DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+
     const InitializationSettings initializationSettings =
         InitializationSettings(
       android: initializationSettingsAndroid,
+      iOS: initializationSettingsDarwin,
+      macOS: initializationSettingsDarwin,
     );
 
     await flutterLocalNotificationsPlugin.initialize(
       settings: initializationSettings,
     );
 
-    // Request permissions for Android 13+
     final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
         flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
@@ -43,8 +55,9 @@ class NotificationHelper {
     required String body,
     required DateTime scheduledDate,
   }) async {
+    if (kIsWeb) return;
     await flutterLocalNotificationsPlugin.zonedSchedule(
-      id: id,
+      id: safeId(id),
       title: title,
       body: body,
       scheduledDate: tz.TZDateTime.from(scheduledDate, tz.local),
@@ -57,13 +70,15 @@ class NotificationHelper {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
         ),
+        iOS: DarwinNotificationDetails(),
       ),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
     );
   }
 
   Future<void> cancelNotification(int id) async {
-    await flutterLocalNotificationsPlugin.cancel(id: id);
+    if (kIsWeb) return;
+    await flutterLocalNotificationsPlugin.cancel(id: safeId(id));
   }
 
   Future<void> showInstantNotification({
@@ -71,8 +86,9 @@ class NotificationHelper {
     required String title,
     required String body,
   }) async {
+    if (kIsWeb) return;
     await flutterLocalNotificationsPlugin.show(
-      id: id,
+      id: safeId(id),
       title: title,
       body: body,
       notificationDetails: const NotificationDetails(
@@ -84,6 +100,7 @@ class NotificationHelper {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
         ),
+        iOS: DarwinNotificationDetails(),
       ),
     );
   }

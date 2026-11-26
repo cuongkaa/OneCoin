@@ -460,10 +460,8 @@ class _RemindersScreenState extends State<RemindersScreen> {
   ) {
     final isPaid = reminder.isPaid == 1;
 
-    // Format amount
-    final format = NumberFormat.decimalPattern();
-    final amountString =
-        '${format.format(reminder.amount)} ${currencyProvider.currency}';
+    // Format amount chuẩn theo tỷ giá tiền tệ hiện hành (VND <-> USD)
+    final amountString = currencyProvider.format(reminder.amount);
 
     // Parse due date
     DateTime dueDate;
@@ -513,7 +511,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
         );
       },
       onDismissed: (_) {
-        NotificationHelper.instance.cancelNotification(reminder.id.hashCode);
+        NotificationHelper.instance.cancelNotification(reminder.id.hashCode & 0x7FFFFFFF);
         reminderProvider.deleteReminder(reminder.id);
       },
       child: Container(
@@ -647,8 +645,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
                               final transProxy = context.read<TransactionModelProxy>();
                               final walletProxy = context.read<WalletModelProxy>();
                               final groupProxy = context.read<GroupModelProxy>();
-                              final format = NumberFormat.decimalPattern();
-                              final amountStr = '${format.format(reminder.amount)} ${currencyProvider.currency}';
+                              final amountStr = currencyProvider.format(reminder.amount);
 
                               await reminderProvider.togglePaidStatus(
                                 reminder.id,
@@ -660,7 +657,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
 
                               if (newVal) {
                                 NotificationHelper.instance
-                                    .cancelNotification(reminder.id.hashCode);
+                                    .cancelNotification(reminder.id.hashCode & 0x7FFFFFFF);
 
                                 String notifTitle = 'Đã thanh toán hoá đơn';
                                 String notifBody = 'Thanh toán thành công $amountStr cho ${reminder.title}';
@@ -679,7 +676,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
                                 }
                                 
                                 await NotificationHelper.instance.showInstantNotification(
-                                  id: const Uuid().v4().hashCode,
+                                  id: const Uuid().v4().hashCode & 0x7FFFFFFF,
                                   title: notifTitle,
                                   body: notifBody,
                                 );

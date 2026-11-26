@@ -33,6 +33,7 @@ class _HomeReportWidgetState extends State<HomeReportWidget> {
   int limitMostGroupExpense = 3;
   double percent = 0;
   List<TransactionModel> transactions = [];
+  int? _cachedRevision;
 
   @override
   void initState() {
@@ -75,6 +76,8 @@ class _HomeReportWidgetState extends State<HomeReportWidget> {
     }
     transLoop:
     for(var tran in transactions){
+      final dt = tran.parsedDate;
+      if (dt == null) continue;
       tabLoop:
       for(var tab in listTab){
         if(tab.isAll){
@@ -82,13 +85,13 @@ class _HomeReportWidgetState extends State<HomeReportWidget> {
           break tabLoop;
         }
         if(tab.isFuture){
-          if(MyDateUtils.isAfter(DateTime.parse(tran.date!), tab.from)){
+          if(MyDateUtils.isAfter(dt, tab.from)){
             tab.transactions.add(tran);
             break tabLoop;
           }
         }
         else{
-          if(MyDateUtils.isBetween(DateTime.parse(tran.date!), tab.from, tab.to)){
+          if(MyDateUtils.isBetween(dt, tab.from, tab.to)){
             tab.transactions.add(tran);
             break tabLoop;
           }
@@ -158,9 +161,25 @@ class _HomeReportWidgetState extends State<HomeReportWidget> {
 
   @override
   Widget build(BuildContext context) {
-    context.watch<GroupModelProxy>(); // Watch for group changes so UI updates from "Loading..."
+    final groupsLen = context.watch<GroupModelProxy>().getAll().length;
     transactions = context.watch<TransactionModelProxy>().getAll();
-    chartData = _generateChartData(transactions);
+    final lang = S.of(context).languageCode;
+    final curr = CurrencyProvider.currentCurrency;
+
+    // Memoize dữ liệu đồ thị: chỉ tính toán lại khi danh sách giao dịch, tab, tiền tệ hoặc ngôn ngữ thay đổi
+    final nextRevision = Object.hash(
+      transactions.length,
+      transactions.isEmpty ? '' : transactions.first.id,
+      transactions.isEmpty ? 0.0 : transactions.first.amount,
+      groupsLen,
+      chartType,
+      curr,
+      lang,
+    );
+    if (_cachedRevision != nextRevision) {
+      _cachedRevision = nextRevision;
+      chartData = _generateChartData(transactions);
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric( horizontal: 10.0),
@@ -232,9 +251,10 @@ class _HomeReportWidgetState extends State<HomeReportWidget> {
               ],
             ),
           ),
-          Container(
-            margin: const EdgeInsets.only(top: 10.0),
-            child: SfCartesianChart(
+          RepaintBoundary(
+            child: Container(
+              margin: const EdgeInsets.only(top: 10.0),
+              child: SfCartesianChart(
                 // zoomPanBehavior: ZoomPanBehavior(
                 //   enablePanning: true,
                 // ),
@@ -334,6 +354,7 @@ class _HomeReportWidgetState extends State<HomeReportWidget> {
                   //   // Width of the columns
                   // ),
                 ]
+              ),
             ),
           ),
           Container(

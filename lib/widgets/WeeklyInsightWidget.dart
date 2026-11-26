@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:onemorecoin/model/TransactionModel.dart';
 import 'package:provider/provider.dart';
@@ -35,16 +34,16 @@ class WeeklyInsightWidget extends StatelessWidget {
     var sortedDays = dailySpending.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
 
-    // Randomize insight
-    int randomType = Random().nextInt(3);
+    // Xoay vòng ổn định theo ngày trong tháng (không bị nhấp nháy khi cuộn/rebuild)
+    int insightIndex = DateTime.now().day % 3;
     
-    if (randomType == 0 && sortedCategories.isNotEmpty) {
+    if (insightIndex == 0 && sortedCategories.isNotEmpty) {
       String topCategory = sortedCategories.first.key;
       double amount = sortedCategories.first.value;
       double percent = (amount / totalExpense) * 100;
       return "💡 Tuần này bạn chi nhiều nhất vào $topCategory, chiếm ${percent.toStringAsFixed(0)}% tổng chi tiêu.";
     } 
-    else if (randomType == 1 && sortedDays.isNotEmpty) {
+    else if (insightIndex == 1 && sortedDays.isNotEmpty) {
       int topDay = sortedDays.first.key;
       List<String> days = ["", "Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"];
       return "💡 Ngày bạn tiêu nhiều tiền nhất trong tuần là ${days[topDay]}.";
